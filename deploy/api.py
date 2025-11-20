@@ -1,10 +1,8 @@
 import asyncio
 import tempfile
-import zipfile
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 
-import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
@@ -12,6 +10,7 @@ from deploy import __version__
 from deploy.config import get_logger
 from deploy.inference import InferencePipeline
 from deploy.utils import download_file_from_s3
+import os
 
 logger = get_logger(__name__)
 
@@ -43,15 +42,34 @@ class GemstoneDimensionsCalculationResponse(BaseModel):
     tags=["GemstoneDimensionsCalculation"],
 )
 async def calculate_gemstone_dimensions(input_path: str = Query(...)) -> GemstoneDimensionsCalculationResponse:
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".mp4") as temp_input_file:
-            temp_input_path = temp_input_file.name
-            await asyncio.to_thread(download_file_from_s3, input_path, temp_input_path)
+    downloaded_video_path = None
 
-        results = await asyncio.to_thread(pipe)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_input_file:
+            downloaded_video_path = temp_input_file.name
+            await asyncio.to_thread(download_file_from_s3, input_path, downloaded_video_path)
+
+        video_path = downloaded_video_path
+        
+        # DEBUGGING: Check existence and permissions
+        logger.info(f"File exists: {os.path.exists(video_path)}")
+        if os.path.exists(video_path):
+            logger.info(f"File permissions: {oct(os.stat(video_path).st_mode)}")
+        
+        input_folder = "/temp"
+        output_folder = "/temp"
+
+        pipe = InferencePipeline()
+
+        results = await asyncio.to_thread(
+            pipe,
+            video_path=video_path,
+            input_folder=input_folder,
+            output_folder=output_folder 
+        )
         logger.info(f"Prediction results: {results}")
 
-        return GemstoneClassificationResponse(
+        return GemstoneDimensionsCalculationResponse(
             gemstone_length_prediction=results["GemstoneLengthPrediction"],
             gemstone_width_prediction=results["GemstoneWidthPrediction"],
             gemstone_thickness_prediction=results["GemstoneThicknessPrediction"],

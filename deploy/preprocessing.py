@@ -1,4 +1,3 @@
-
 import cv2
 import os
 import numpy as np
@@ -16,12 +15,10 @@ def extract_180_frames(video_path, output_folder):
 
     vidcap = cv2.VideoCapture(video_path)
     if not vidcap.isOpened():
-        print("Error: Could not open video file.")
-        exit()
+        raise RuntimeError(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
 
     TOTAL_FRAMES_TO_PROCESS = 180
     frames_processed = 0
-    frames_extracted = 0
 
     while frames_processed < TOTAL_FRAMES_TO_PROCESS:
         success, image = vidcap.read()
@@ -33,11 +30,10 @@ def extract_180_frames(video_path, output_folder):
         frame_filename = os.path.join(output_folder, f"frame_{frames_processed:04d}.jpg")
         cv2.imwrite(frame_filename, image)
         print(f"Extracted Frame {frames_processed} (Saved as {os.path.basename(frame_filename)})")
-        frames_extracted += 1 
+        frames_processed += 1 
 
     vidcap.release()
     print(f"Total frames processed: {frames_processed}")
-    print(f"Total frames extracted: {frames_extracted}")
 
 
 # Helper function to extract binary mask
@@ -113,7 +109,7 @@ def extract_binary_masks(input_folder, output_folder):
                     # 3. Apply morphological closing (dilation followed by erosion)
                     closed_mask = repair_mask_edges(processed_mask, kernel_size=7, iterations=2)
 
-                    mask_filename = os.path.splitext(filename)[0] + "_mask.png"
+                    mask_filename = os.path.splitext(filename)[0] + ".png"
                     output_path = os.path.join(output_folder, mask_filename)
                     cv2.imwrite(output_path, closed_mask)
                     print(f"Processed '{filename}' and saved mask to '{mask_filename}'")
@@ -191,18 +187,38 @@ def extract_frontal_image(input_folder):
 
     if max_first_five['path']:
         global_filename = os.path.basename(max_first_five['path'])
+        global_filename = global_filename.replace(".jpg", ".png")
+        print(f"global_filename: {global_filename}")
         
         return global_filename
     else:
         print(f"Could not find a valid frame with length data in the first {SAMPLE_SIZE} frames.")
 
 
+# Function to extract index of side image filename
+def extract_side_image(global_filename):
+    # Extract front view image frame index
+    front_view_image = global_filename
+    print(f"front_view_image: {front_view_image}")
+    front_view_image_index = front_view_image.split("_")[1]
+    front_view_image_index = int(front_view_image_index.split(".")[0])
+    print(f"front_view_image_index: {front_view_image_index}")
+
+    # Extract front view image frame index
+    side_view_image_index = front_view_image_index + 45
+    side_view_image = "frame_00" + str(side_view_image_index) + ".png"
+    print(f"side view image filename: {side_view_image}") 
+
+    return side_view_image
+
+
 # Function to calculate maximum length and width from frontal image
-def calculate_max_dimensions_combined(binary_mask):
+def calculate_max_dimensions_combined(global_filename):
     """
     Calculates length and width of frontal image using maximum length and width
     """
-
+    image_path = "/temp/" + global_filename 
+    binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     drawn_mask = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR)
     maximum_width = 0.0
@@ -220,11 +236,13 @@ def calculate_max_dimensions_combined(binary_mask):
     extreme_top_y = np.min(all_points[:, 1])
     extreme_bottom_y = np.max(all_points[:, 1])
     maximum_width = extreme_bottom_y - extreme_top_y 
+    print(f"maximum_width: {maximum_width}")
 
     # X-Extremes (Length)
     extreme_left_x = np.min(all_points[:, 0])
     extreme_right_x = np.max(all_points[:, 0])
     maximum_length = extreme_right_x - extreme_left_x
+    print(f"maximum_length: {maximum_length}")
 
     length = 0
     width = 0
@@ -235,16 +253,72 @@ def calculate_max_dimensions_combined(binary_mask):
         length = maximum_width * conversion_factor
         width = maximum_length * conversion_factor
 
-    print(f"Length: {length} mm")
-    print(f"Width: {width} mm")
+    length = round(length, 2)
+    width = round(width, 2)
+
+    print(f"Length: {length:.2f} mm")
+    print(f"Width: {width:.2f} mm")
 
     return float(length), float(width)
 
 
+# Function to calculate maximum height from side view image
+def calculate_maximum_height(global_filename):
+    """
+    Finds the maximum height of the largest black object (contour), 
+    and draws a purely VERTICAL line connecting the extreme top/bottom Y-coordinates 
+    at a central X-reference point.
+    """
+    image_path = "/temp/" + global_filename 
+    binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    drawn_mask = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR)
+    maximum_height = 0.0
+    conversion_factor = 0.00274 * 2
+    
+    # We find contours directly on the binary mask to target the black regions.
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        print("No black object contours found in the mask.")
+        return cv2.cvtColor(drawn_mask, cv2.COLOR_GRAY2BGR), 0.0
+
+    # 1. Find the largest contour
+    largest_contour = max(contours, key=cv2.contourArea)
+
+    # 2. Extract all coordinates (x, y) from the largest contour
+    all_points = largest_contour.reshape(-1, 2)
+    
+    # 3. Find the minimum and maximum Y values (Height is difference between min/max Y)
+    extreme_top_y = np.min(all_points[:, 1])    # Top edge has smallest Y
+    extreme_bottom_y = np.max(all_points[:, 1]) # Bottom edge has largest Y
+    
+    maximum_height = extreme_bottom_y - extreme_top_y
+    height = maximum_height * conversion_factor
+    height = round(height, 2)
+    print(f"maximum_height: {height}")
+
+    return float(height)
+
+
 # Function to process dimensions
-def extract_180_frames(video_path, input_folder, output_folder):
+def process_dimensions(video_path, input_folder, output_folder):
     # 1. Extract 180 video frames
     extract_180_frames(video_path, output_folder)
 
     # 2. Extract binary mask
     extract_binary_masks(input_folder, output_folder)
+
+    # 3. Extract index of frontal image filename
+    front_global_filename = extract_frontal_image(input_folder)
+
+    # 4. Calculate maximum length and width from frontal image
+    length, width = calculate_max_dimensions_combined(front_global_filename)
+
+    # 5. Extract index of side image filename
+    side_global_filename = extract_side_image(front_global_filename)
+
+    # 6. Calculate maximum height from side view image
+    height = calculate_maximum_height(side_global_filename)
+
+    return length, width, height
