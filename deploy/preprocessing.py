@@ -87,6 +87,8 @@ def extract_binary_masks(input_folder, output_folder):
         print(f"Error: Input directory '{input_folder}' not found.")
     else:
         image_files = os.listdir(input_folder)
+        image_files = [i for i in image_files if i.split(".")[-1] !="png"]
+        image_files.sort()
 
         if not image_files:
             print(f"No images found in the directory: {input_folder}")
@@ -129,6 +131,7 @@ def calculate_maximum_length(binary_mask):
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
+        print("No black object contours found in the mask.")
         return cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR), 0.0
 
     # 1. Find the largest contour
@@ -140,10 +143,15 @@ def calculate_maximum_length(binary_mask):
     # 3. Find the minimum and maximum X values
     extreme_left_x = np.min(all_points[:, 0])
     extreme_right_x = np.max(all_points[:, 0])
-    
     maximum_length = extreme_right_x - extreme_left_x
     
-    return float(maximum_length)
+    # 4. Find the actual (x, y) boundary points (Needed to calculate a reference Y-coordinate)
+    left_points = all_points[all_points[:, 0] == extreme_left_x]
+    right_points = all_points[all_points[:, 0] == extreme_right_x]
+    start_point_hypotenuse = tuple(left_points[-1])
+    end_point_hypotenuse = tuple(right_points[0])
+
+    return float(maximum_length), start_point_hypotenuse, end_point_hypotenuse
 
 
 # Function to extract index of frontal image filename
@@ -156,6 +164,8 @@ def extract_frontal_image(input_folder):
         image_paths.extend(glob.glob(os.path.join(input_folder, ext)))
     
     image_paths.sort()
+    image_paths = [i for i in image_paths if i.split(".")[-1] != "jpg"]
+    print(f"image_paths: {image_paths}")
     
     if not image_paths:
         print(f"Error: No images found in the directory: {input_folder}")
@@ -167,12 +177,16 @@ def extract_frontal_image(input_folder):
     for input_path in image_paths:
         binary_mask = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
         if binary_mask is not None:
-            length = calculate_maximum_length(binary_mask)
+            length, _, _ = calculate_maximum_length(binary_mask)
             all_lengths.append(length)
             processed_count += 1
 
+    print(f"all_lengths: {all_lengths}")
+    print(f"len(all_lengths): {len(all_lengths)}")
     analysis_paths = image_paths[:SAMPLE_SIZE]
+    print(f"analysis_paths: {analysis_paths}")
     max_first_five = {'path': None, 'length': float('-inf')}
+    print(f"max_first_five: {max_first_five}")
     
     for path in analysis_paths:
         mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
@@ -180,7 +194,7 @@ def extract_frontal_image(input_folder):
         if mask is None:
             continue
             
-        length = calculate_maximum_length(mask) 
+        length, _, _ = calculate_maximum_length(mask) 
         if length > max_first_five['length']:
             max_first_five['length'] = length
             max_first_five['path'] = path
@@ -199,10 +213,8 @@ def extract_frontal_image(input_folder):
 def extract_side_image(global_filename):
     # Extract front view image frame index
     front_view_image = global_filename
-    print(f"front_view_image: {front_view_image}")
     front_view_image_index = front_view_image.split("_")[1]
     front_view_image_index = int(front_view_image_index.split(".")[0])
-    print(f"front_view_image_index: {front_view_image_index}")
 
     # Extract front view image frame index
     side_view_image_index = front_view_image_index + 45
@@ -220,14 +232,13 @@ def calculate_max_dimensions_combined(global_filename):
     image_path = "/temp/" + global_filename 
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    drawn_mask = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR)
     maximum_width = 0.0
     maximum_length = 0.0
     conversion_factor = 0.00274 * 2
 
     if not contours:
         print("No black object contours found in the mask.")
-        return drawn_mask, maximum_width, maximum_length
+        return maximum_width, maximum_length
 
     largest_contour = max(contours, key=cv2.contourArea)
     all_points = largest_contour.reshape(-1, 2)
@@ -246,6 +257,7 @@ def calculate_max_dimensions_combined(global_filename):
 
     length = 0
     width = 0
+
     if maximum_length > maximum_width:
         length = maximum_length * conversion_factor
         width = maximum_width * conversion_factor
@@ -256,23 +268,148 @@ def calculate_max_dimensions_combined(global_filename):
     length = round(length, 2)
     width = round(width, 2)
 
-    print(f"Length: {length:.2f} mm")
-    print(f"Width: {width:.2f} mm")
+    print(f"Length: {length} mm")
+    print(f"Width: {width} mm")
 
     return float(length), float(width)
 
 
+# Helper function to apply iterative horizontal perspective correction
+def correct_perspective_horizontal(image, A, B):
+    """
+    Calculates the rotation angle needed to make the line connecting A and B horizontal,
+    and then applies that rotation to the image.
+
+    Args:
+        image (np.array): The input image.
+        A (tuple): (x, y) coordinates of point A.
+        B (tuple): (x, y) coordinates of point B.
+
+    Returns:
+        np.array: The corrected (rotated) image.
+    """
+    # Ensure image is not None/empty
+    if image is None:
+        print("Error: Input image is None.")
+        return None
+
+    # 1. Calculate the angle of the line connecting A and B
+    # atan2 takes (y2-y1, x2-x1)
+    angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
+    angle_deg = np.degrees(angle_rad)
+
+    print(f"Calculated Angle (degrees): {angle_deg:.2f}")
+
+    # The rotation angle needed is the negative of the calculated angle.
+    rotation_angle = angle_deg
+
+    # 2. Define the center of rotation
+    # Handle single channel (grayscale) or multi-channel images
+    if len(image.shape) == 3:
+        (h, w) = image.shape[:2]
+    else:
+        (h, w) = image.shape
+    
+    center = (w // 2, h // 2)
+
+    # 3. Create the rotation matrix
+    # The arguments are (center, angle, scale)
+    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+
+    # 4. Apply the rotation to the image
+    # Note: We use the original image dimensions for the output size.
+    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    return rotated, rotation_angle
+
+
+# Function to apply iterative horizontal perspective correction
+def iterative_horizontal_perspection_correction(global_filename):
+    """" Apply iterative horizontal perspective correction till convergence"""
+    image_path = "/temp/" + global_filename 
+    binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    MAX_ITERATIONS = 10
+    CONVERGENCE_TOLERANCE = 0.5 # Degrees
+    DIVERGENCE_THRESHOLD = 0.1 # Stop if correction angle increases by more than this (e.g., 0.1 deg)
+
+    # Calculate initial angle and points BEFORE loop starts
+    _, A, B = calculate_maximum_length(binary_mask)
+    
+    # Calculate the exact angle required for the initial rotation
+    initial_correction_angle = np.degrees(np.arctan2(B[1] - A[1], B[0] - A[0]))
+    
+    rotation_angle = initial_correction_angle # Start with the initial angle
+    previous_required_angle = initial_correction_angle * 10 # Initialize high to pass the first check
+    iteration = 0
+    
+    # Variables to store the last stable (non-divergent) result
+    best_stable_mask = binary_mask.copy()
+    best_stable_angle = 0.0
+    
+    print(f"Starting Iterative Horizontal Perspective Correction (Tolerance: {CONVERGENCE_TOLERANCE} deg)...")
+    
+    # Get the initial drawn mask for plotting "Before Convergence"
+    _, A, B = calculate_maximum_length(binary_mask)
+    
+    while iteration < MAX_ITERATIONS:
+        if abs(rotation_angle) <= CONVERGENCE_TOLERANCE and iteration > 0:
+            print(f"\n--- SUCCESS: CONVERGED ---")
+            print(f"Final Angle: {rotation_angle:.4f}° at Iteration {iteration}.")
+            break
+            
+        # A. Find the new extreme points (A and B) on the current mask
+        _, A, B = calculate_maximum_length(binary_mask)
+
+        # B. Calculate the rotation needed and apply it
+        binary_mask, rotation_angle = correct_perspective_horizontal(binary_mask, A, B)
+        
+        # --- DIVERGENCE CHECK (After 1st iteration) ---
+        if iteration > 0:
+            # Check if the magnitude of the required correction angle has increased significantly
+            # If the current required angle is larger than the previous one, divergence is likely.
+            if abs(rotation_angle) > abs(previous_required_angle) + DIVERGENCE_THRESHOLD:
+                print(f"\n--- WARNING: DIVERGENCE DETECTED ---")
+                print(f"Current angle ({rotation_angle:.4f}°) is > Previous angle ({previous_required_angle:.4f}°).")
+                print(f"Stopping and reverting to last stable result (Iteration {iteration - 1}).")
+                
+                # Revert mask and angle to the last stable state
+                binary_mask = best_stable_mask
+                rotation_angle = best_stable_angle
+                break
+
+        # Store the current mask and angle as the 'best stable' result
+        best_stable_mask = binary_mask.copy()
+        best_stable_angle = rotation_angle
+        
+        previous_required_angle = rotation_angle # Update for the next iteration's divergence check
+        
+        print(f"Iteration {iteration + 1}: Required Correction: {rotation_angle:.4f} deg")
+
+        if binary_mask is None:
+            print("Error during rotation. Stopping loop.")
+            break
+            
+        iteration += 1
+    
+    else: # Executed if loop finishes naturally due to MAX_ITERATIONS
+        print(f"\n--- WARNING: MAX ITERATIONS REACHED ---")
+        print(f"Final Angle: {rotation_angle:.4f} deg (Reverting to best stable result if not converged).")
+        # Ensure final output is the last stable result if max iterations hit before convergence/divergence
+        binary_mask = best_stable_mask
+        rotation_angle = best_stable_angle
+
+    return binary_mask
+
+
 # Function to calculate maximum height from side view image
-def calculate_maximum_height(global_filename):
+def calculate_maximum_height(binary_mask):
     """
     Finds the maximum height of the largest black object (contour), 
     and draws a purely VERTICAL line connecting the extreme top/bottom Y-coordinates 
     at a central X-reference point.
     """
-    image_path = "/temp/" + global_filename 
-    binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    drawn_mask = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR)
     maximum_height = 0.0
     conversion_factor = 0.00274 * 2
     
@@ -281,7 +418,7 @@ def calculate_maximum_height(global_filename):
     
     if not contours:
         print("No black object contours found in the mask.")
-        return cv2.cvtColor(drawn_mask, cv2.COLOR_GRAY2BGR), 0.0
+        return maximum_height
 
     # 1. Find the largest contour
     largest_contour = max(contours, key=cv2.contourArea)
@@ -296,7 +433,7 @@ def calculate_maximum_height(global_filename):
     maximum_height = extreme_bottom_y - extreme_top_y
     height = maximum_height * conversion_factor
     height = round(height, 2)
-    print(f"maximum_height: {height}")
+    print(f"Thickness: {height} mm")
 
     return float(height)
 
@@ -318,7 +455,10 @@ def process_dimensions(video_path, input_folder, output_folder):
     # 5. Extract index of side image filename
     side_global_filename = extract_side_image(front_global_filename)
 
-    # 6. Calculate maximum height from side view image
-    height = calculate_maximum_height(side_global_filename)
+    # 6. Apply iterative horizontal perspective correction to side view image
+    corrected_mask = iterative_horizontal_perspection_correction(side_global_filename)
 
-    return length, width, height
+    # 7. Calculate maximum height from side view image
+    thickness = calculate_maximum_height(corrected_mask)
+
+    return length, width, thickness
