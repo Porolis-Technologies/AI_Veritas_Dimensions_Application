@@ -43,7 +43,7 @@ def fill_holes_for_specific_mask(binary_mask):
     """
 
     inverted_mask = cv2.bitwise_not(binary_mask)
-    contours, hierarchy = cv2.findContours(inverted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(inverted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
         print("No contours found in the inverted mask. Returning original.")
@@ -103,7 +103,7 @@ def extract_binary_masks(input_folder, output_folder):
                         continue
                     
                     # 1. Apply Otsu's Binarization
-                    retVal, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                     
                     # 2. Apply the hole-filling function to the image array
                     processed_mask = fill_holes_for_specific_mask(binary_mask)
@@ -165,7 +165,6 @@ def extract_frontal_image(input_folder):
     
     image_paths.sort()
     image_paths = [i for i in image_paths if i.split(".")[-1] != "jpg"]
-    print(f"image_paths: {image_paths}")
     
     if not image_paths:
         print(f"Error: No images found in the directory: {input_folder}")
@@ -181,12 +180,8 @@ def extract_frontal_image(input_folder):
             all_lengths.append(length)
             processed_count += 1
 
-    print(f"all_lengths: {all_lengths}")
-    print(f"len(all_lengths): {len(all_lengths)}")
     analysis_paths = image_paths[:SAMPLE_SIZE]
-    print(f"analysis_paths: {analysis_paths}")
     max_first_five = {'path': None, 'length': float('-inf')}
-    print(f"max_first_five: {max_first_five}")
     
     for path in analysis_paths:
         mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
@@ -247,13 +242,11 @@ def calculate_max_dimensions_combined(global_filename):
     extreme_top_y = np.min(all_points[:, 1])
     extreme_bottom_y = np.max(all_points[:, 1])
     maximum_width = extreme_bottom_y - extreme_top_y 
-    print(f"maximum_width: {maximum_width}")
 
     # X-Extremes (Length)
     extreme_left_x = np.min(all_points[:, 0])
     extreme_right_x = np.max(all_points[:, 0])
     maximum_length = extreme_right_x - extreme_left_x
-    print(f"maximum_length: {maximum_length}")
 
     length = 0
     width = 0
