@@ -37,44 +37,116 @@ def extract_180_frames(video_path, output_folder):
 
 
 # Helper function to extract binary mask
-def fill_holes_for_specific_mask(binary_mask):
-    """
-    Fill holes in the extracted binary mask using external contours.
-    """
+def morphological_gradient_detection(image):
+    # 1. Blur slightly to reduce camera noise, but keep structure
+    blurred = cv2.GaussianBlur(image, (5, 5), 0)
 
-    inverted_mask = cv2.bitwise_not(binary_mask)
-    contours, _ = cv2.findContours(inverted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 2. Compute Morphological Gradient
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    morph_gradient = cv2.morphologyEx(blurred, cv2.MORPH_GRADIENT, kernel)
 
-    if not contours:
-        print("No contours found in the inverted mask. Returning original.")
-        return binary_mask
+    # 3. Binarize the Gradient
+    _, binary_edges = cv2.threshold(morph_gradient, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
 
-    largest_contour = max(contours, key=cv2.contourArea)
-    filled_region = np.zeros_like(binary_mask)
-    cv2.drawContours(filled_region, [largest_contour], 0, 255, thickness=cv2.FILLED)
-    final_filled_mask = filled_region 
+    # 4. Fill the Gaps (Morphological Closing)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    closed_mask = cv2.morphologyEx(binary_edges, cv2.MORPH_CLOSE, close_kernel)
 
-    return final_filled_mask
+    # 5. Find the Largest Contour to remove noise
+    contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    final_mask = np.zeros_like(image)
+    
+    if contours:
+        # Sort contours by area and keep the largest one
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        # Fill the largest contour (The Gem)
+        cv2.drawContours(final_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+
+    return final_mask
 
 
 # Helper function to extract binary mask
-def repair_mask_edges(binary_mask, kernel_size=7, iterations=2):
-    # Define the kernel for morphological closing
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+def apply_convex_hull(image):
+    """
+    Robustly finds the gemstone shape using Convex Hull.
+    Returns a black mask if no object is found, preventing 'all white' errors.
+    """
+    # 1. Ensure binary
+    _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
+    
+    h, w = binary.shape[:2]
+    image_area = h * w
 
-    # Apply morphological closing (dilation followed by erosion)
-    closed_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel, iterations=iterations)
+    # Create a black canvas for the default return to avoid "White Squares"
+    final_mask = np.zeros((h, w), dtype=np.uint8)
 
-    return closed_mask
+    # 2. AUTO-DETECT BACKGROUND COLOR
+    # Check corners to see if background is white
+    corners = [binary[0,0], binary[0, w-1], binary[h-1, 0], binary[h-1, w-1]]
+    avg_corner = sum(corners) / 4
+
+    if avg_corner > 127:
+        # Background is White -> Invert so object becomes White
+        binary = cv2.bitwise_not(binary)
+
+    # 3. Find Contours (Use RETR_EXTERNAL to ignore internal holes/noise)
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        print("   -> No contours found. Returning empty black mask.")
+        return final_mask
+
+    # 4. Filter Contours
+    valid_contours = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        
+        # Ignore tiny noise
+        if area < 100: 
+            continue
+        
+        # IGNORE FRAME: Only ignore if it is literally the border of the image
+        # (Increased threshold from 0.95 to 0.99 to allow large gems)
+        if area > 0.99 * image_area:
+            continue
+            
+        valid_contours.append(cnt)
+
+    if not valid_contours:
+        # If we filtered everything out, check if we have a large contour that looks like a gem
+        # Sometimes the gem touches all borders (macro shot)
+        if contours:
+            largest_raw = max(contours, key=cv2.contourArea)
+            # If it's not a perfect rectangle (image frame), we might accept it
+            x, y, cw, ch = cv2.boundingRect(largest_raw)
+            if cw < w or ch < h: 
+                valid_contours.append(largest_raw)
+            else:
+                print("   -> Only found image frame/border. Returning empty mask.")
+                return final_mask
+        else:
+            return final_mask
+
+    # 5. Find the largest remaining contour (The Gemstone)
+    largest_contour = max(valid_contours, key=cv2.contourArea)
+
+    # 6. Apply Convex Hull
+    hull = cv2.convexHull(largest_contour)
+
+    # 7. Draw on black canvas
+    cv2.drawContours(final_mask, [hull], -1, 255, thickness=cv2.FILLED)
+
+    return final_mask
 
 
 # Function to extract binary mask
 def extract_binary_masks(input_folder, output_folder):
     """
     Extract the binary mask from the extracted video frames using the following steps:
-    Step 1: Extract binary mask using Otsu's Thresholding.
-    Step 2: Fill holes in the extracted binary masks using external contours.
-    Step 3: Repair the edges of extracted binary masks using smoothing with morphological closing.
+    Step 1: Extract binary mask using morphological gradient detection.
+    Step 2: Fill holes in the extracted binary masks using convex hull.
     """
 
     image_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
@@ -102,14 +174,11 @@ def extract_binary_masks(input_folder, output_folder):
                         print(f"Warning: Could not read image {filename}. Skipping.")
                         continue
                     
-                    # 1. Apply Otsu's Binarization
-                    _, binary_mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                    
-                    # 2. Apply the hole-filling function to the image array
-                    processed_mask = fill_holes_for_specific_mask(binary_mask)
+                    # 1. Apply morphological gradient detection
+                    processed_mask = morphological_gradient_detection(image)
 
-                    # 3. Apply morphological closing (dilation followed by erosion)
-                    closed_mask = repair_mask_edges(processed_mask, kernel_size=7, iterations=2)
+                    # 2. Apply convex hull
+                    closed_mask = apply_convex_hull(processed_mask)
 
                     mask_filename = os.path.splitext(filename)[0] + ".png"
                     output_path = os.path.join(output_folder, mask_filename)
