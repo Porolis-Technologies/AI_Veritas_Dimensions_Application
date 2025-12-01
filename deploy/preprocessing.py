@@ -58,7 +58,6 @@ def morphological_gradient_detection(image):
     final_mask = np.zeros_like(image)
     
     if contours:
-        # Sort contours by area and keep the largest one
         largest_contour = max(contours, key=cv2.contourArea)
         
         # Fill the largest contour (The Gem)
@@ -75,20 +74,15 @@ def apply_convex_hull(image):
     """
     # 1. Ensure binary
     _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
-    
     h, w = binary.shape[:2]
     image_area = h * w
-
-    # Create a black canvas for the default return to avoid "White Squares"
     final_mask = np.zeros((h, w), dtype=np.uint8)
 
     # 2. AUTO-DETECT BACKGROUND COLOR
-    # Check corners to see if background is white
     corners = [binary[0,0], binary[0, w-1], binary[h-1, 0], binary[h-1, w-1]]
     avg_corner = sum(corners) / 4
 
     if avg_corner > 127:
-        # Background is White -> Invert so object becomes White
         binary = cv2.bitwise_not(binary)
 
     # 3. Find Contours (Use RETR_EXTERNAL to ignore internal holes/noise)
@@ -115,11 +109,8 @@ def apply_convex_hull(image):
         valid_contours.append(cnt)
 
     if not valid_contours:
-        # If we filtered everything out, check if we have a large contour that looks like a gem
-        # Sometimes the gem touches all borders (macro shot)
         if contours:
             largest_raw = max(contours, key=cv2.contourArea)
-            # If it's not a perfect rectangle (image frame), we might accept it
             x, y, cw, ch = cv2.boundingRect(largest_raw)
             if cw < w or ch < h: 
                 valid_contours.append(largest_raw)
@@ -195,8 +186,6 @@ def calculate_maximum_length(binary_mask):
     and draws a purely HORIZONTAL line connecting the extreme left/right X-coordinates 
     at a central Y-reference point.
     """
-    
-    # We find contours directly on the binary mask to target the black regions.
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
@@ -293,8 +282,17 @@ def calculate_max_dimensions_combined(image):
     """
     Calculates length and width of frontal image using maximum length and width
     """
-    #binary_mask = cv2.imread(image, cv2.IMREAD_GRAYSCALE)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Check the number of dimensions/channels
+    if len(image.shape) == 3:
+        # If it has 3 dimensions (channels), assume it's color (BGR) and convert to grayscale.
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    elif len(image.shape) == 2:
+        # If it has 2 dimensions, it is already grayscale (1 channel).
+        gray = image.copy() 
+    else:
+        # Handle unexpected number of dimensions (e.g., 4 channels for BGRA)
+        raise ValueError(f"Unexpected number of image dimensions: {len(image.shape)}")
+
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_width = 0.0
     maximum_length = 0.0
@@ -395,15 +393,11 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
         center = (w // 2, h // 2)
 
     # 3. Create and apply the rotation matrix
-    # Note: We use the original image dimensions for the output size.
     M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
-
-    # Need h and w defined from image dimensions
     (h, w) = image.shape[:2] if len(image.shape) == 3 else image.shape 
-    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
-    # We return the rotated image and the final angle used for consistency in the main loop
-    return rotated, rotation_angle
+    return rotated_image, rotation_angle
 
 
 # Helper function to detect rectangular shapes
@@ -412,8 +406,6 @@ def calculate_extent(global_filename):
     gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     # Find contours in the grayscale image
-    # RETR_EXTERNAL retrieves only the outer contours
-    # CHAIN_APPROX_SIMPLE compresses horizontal, vertical, and diagonal segments
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Check if any contours were found
@@ -422,7 +414,6 @@ def calculate_extent(global_filename):
         return None
 
     # Select the largest contour (assumes the shape is the main object)
-    # This converts the list of contours into a single contour array 'c'
     c = max(contours, key=cv2.contourArea)
 
     # Get Min Area Rect (Rotated Bounding Box)
@@ -468,17 +459,12 @@ def correct_perspective_horizontal(image, A, B):
         return None
 
     # 1. Calculate the angle of the line connecting A and B
-    # atan2 takes (y2-y1, x2-x1)
     angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
     angle_deg = np.degrees(angle_rad)
-
     print(f"Calculated Angle (degrees): {angle_deg:.2f}")
-
-    # The rotation angle needed is the negative of the calculated angle.
     rotation_angle = angle_deg
 
     # 2. Define the center of rotation
-    # Handle single channel (grayscale) or multi-channel images
     if len(image.shape) == 3:
         (h, w) = image.shape[:2]
     else:
@@ -487,11 +473,9 @@ def correct_perspective_horizontal(image, A, B):
     center = (w // 2, h // 2)
 
     # 3. Create the rotation matrix
-    # The arguments are (center, angle, scale)
     M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
 
     # 4. Apply the rotation to the image
-    # Note: We use the original image dimensions for the output size.
     rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
     return rotated_image, rotation_angle
@@ -520,7 +504,6 @@ def iterative_horizontal_perspection_correction(global_filename):
     # Variables to store the last stable (non-divergent) result
     best_stable_mask = binary_mask.copy()
     best_stable_angle = 0.0
-    
     print(f"Starting Iterative Horizontal Perspective Correction (Tolerance: {CONVERGENCE_TOLERANCE} deg)...")
     
     # Get the initial drawn mask for plotting "Before Convergence"
@@ -540,8 +523,6 @@ def iterative_horizontal_perspection_correction(global_filename):
         
         # --- DIVERGENCE CHECK (After 1st iteration) ---
         if iteration > 0:
-            # Check if the magnitude of the required correction angle has increased significantly
-            # If the current required angle is larger than the previous one, divergence is likely.
             if abs(rotation_angle) > abs(previous_required_angle) + DIVERGENCE_THRESHOLD:
                 print(f"\n--- WARNING: DIVERGENCE DETECTED ---")
                 print(f"Current angle ({rotation_angle:.4f}°) is > Previous angle ({previous_required_angle:.4f}°).")
@@ -555,9 +536,7 @@ def iterative_horizontal_perspection_correction(global_filename):
         # Store the current mask and angle as the 'best stable' result
         best_stable_mask = binary_mask.copy()
         best_stable_angle = rotation_angle
-        
-        previous_required_angle = rotation_angle # Update for the next iteration's divergence check
-        
+        previous_required_angle = rotation_angle 
         print(f"Iteration {iteration + 1}: Required Correction: {rotation_angle:.4f} deg")
 
         if binary_mask is None:
@@ -566,10 +545,9 @@ def iterative_horizontal_perspection_correction(global_filename):
             
         iteration += 1
     
-    else: # Executed if loop finishes naturally due to MAX_ITERATIONS
+    else: 
         print(f"\n--- WARNING: MAX ITERATIONS REACHED ---")
         print(f"Final Angle: {rotation_angle:.4f} deg (Reverting to best stable result if not converged).")
-        # Ensure final output is the last stable result if max iterations hit before convergence/divergence
         binary_mask = best_stable_mask
         rotation_angle = best_stable_angle
 
@@ -587,7 +565,6 @@ def calculate_maximum_height(binary_mask):
     maximum_height = 0.0
     conversion_factor = 0.00274 * 2
     
-    # We find contours directly on the binary mask to target the black regions.
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
@@ -601,8 +578,8 @@ def calculate_maximum_height(binary_mask):
     all_points = largest_contour.reshape(-1, 2)
     
     # 3. Find the minimum and maximum Y values (Height is difference between min/max Y)
-    extreme_top_y = np.min(all_points[:, 1])    # Top edge has smallest Y
-    extreme_bottom_y = np.max(all_points[:, 1]) # Bottom edge has largest Y
+    extreme_top_y = np.min(all_points[:, 1])    
+    extreme_bottom_y = np.max(all_points[:, 1]) 
     
     maximum_height = extreme_bottom_y - extreme_top_y
     height = maximum_height * conversion_factor
