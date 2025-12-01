@@ -289,13 +289,13 @@ def extract_side_image(global_filename):
 
 
 # Function to calculate maximum length and width from frontal image
-def calculate_max_dimensions_combined(global_filename):
+def calculate_max_dimensions_combined(image):
     """
     Calculates length and width of frontal image using maximum length and width
     """
-    image_path = "/temp/" + global_filename 
-    binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    #binary_mask = cv2.imread(image, cv2.IMREAD_GRAYSCALE)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_width = 0.0
     maximum_length = 0.0
     conversion_factor = 0.00274 * 2
@@ -334,6 +334,118 @@ def calculate_max_dimensions_combined(global_filename):
     print(f"Width: {width} mm")
 
     return float(length), float(width)
+
+
+# Helper function to apply perspective correction for rectangular shapes
+def extract_min_bounding_box(global_filename):
+    """
+    Finds and draws the minimum area bounding box for the main object in an image.
+
+    Args:
+        global_filename: The input image global filename.
+
+    Returns:
+        tuple: A tuple containing the drawn image, the width of the bounding box,
+               and the height of the bounding box, or (None, None, None, None) if no contours are found.
+    """
+    image_path = "/temp/" + global_filename 
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"Error: Could not load image from {image_path}")
+        return None, None, None, None
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        largest_contour = max(contours, key=cv2.contourArea)
+        min_area_rect = cv2.minAreaRect(largest_contour)
+        box_points = cv2.boxPoints(min_area_rect)
+        box_points = np.intp(box_points)
+        
+        (x, y), (width, height), angle = min_area_rect
+        print(f"Processing {os.path.basename(image_path)}:")
+        print(f"   Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
+
+        return image, width, height, angle
+    else:
+        print(f"No contours found in {os.path.basename(image_path)}")
+        return None, None, None, None
+
+
+# Helper function to apply perspective correction for rectangular shapes
+def correct_perspective_horizontal_mab(image, angle_deg, center=None):
+    """
+    Applies rotation based on the angle outputted from extract_min_bounding_box.
+    Returns: rotated_image
+    """
+    if image is None:
+        return None
+
+    # 1. Calculate the rotation angle (Using the logic provided by the user)
+    rotation_angle = 0
+    if angle_deg > 10:
+        rotation_angle = angle_deg - 90
+    else:
+        rotation_angle = angle_deg
+
+    # 2. Define the center of rotation
+    if center is None:
+        (h, w) = image.shape[:2] if len(image.shape) == 3 else image.shape
+        center = (w // 2, h // 2)
+
+    # 3. Create and apply the rotation matrix
+    # Note: We use the original image dimensions for the output size.
+    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+
+    # Need h and w defined from image dimensions
+    (h, w) = image.shape[:2] if len(image.shape) == 3 else image.shape 
+    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    # We return the rotated image and the final angle used for consistency in the main loop
+    return rotated, rotation_angle
+
+
+# Helper function to detect rectangular shapes
+def calculate_extent(global_filename):
+    image_path = "/temp/" + global_filename 
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+    # Find contours in the grayscale image
+    # RETR_EXTERNAL retrieves only the outer contours
+    # CHAIN_APPROX_SIMPLE compresses horizontal, vertical, and diagonal segments
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Check if any contours were found
+    if not contours:
+        print("No contours found.")
+        return None
+
+    # Select the largest contour (assumes the shape is the main object)
+    # This converts the list of contours into a single contour array 'c'
+    c = max(contours, key=cv2.contourArea)
+
+    # Get Min Area Rect (Rotated Bounding Box)
+    rect = cv2.minAreaRect(c)
+    (_, _), (width, height), _ = rect
+    box_area = width * height
+    shape_area = cv2.contourArea(c)
+
+    # Extent (How much the shape fills the bounding box)
+    extent = shape_area / box_area if box_area > 0 else 0
+
+    return extent
+
+
+# Function to check for rectangular shape
+def check_rectangular(extent):
+    """Checks for rectangular shape based on custom criteria."""
+    is_rectangular = (extent >= 0.85)
+    if is_rectangular:
+        print("✅ Shape detected as RECTANGULAR!")
+    else:
+        print(f"❌ Shape is NOT rectangular.")
+    return is_rectangular
 
 
 # Helper function to apply iterative horizontal perspective correction
@@ -380,9 +492,9 @@ def correct_perspective_horizontal(image, A, B):
 
     # 4. Apply the rotation to the image
     # Note: We use the original image dimensions for the output size.
-    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
-    return rotated, rotation_angle
+    return rotated_image, rotation_angle
 
 
 # Function to apply iterative horizontal perspective correction
@@ -511,16 +623,28 @@ def process_dimensions(video_path, input_folder, output_folder):
     # 3. Extract index of frontal image filename
     front_global_filename = extract_frontal_image(input_folder)
 
-    # 4. Calculate maximum length and width from frontal image
-    length, width = calculate_max_dimensions_combined(front_global_filename)
+    # 4. Check for rectangular shape
+    extent = calculate_extent(front_global_filename)
+    is_rectangular = check_rectangular(extent)
+    
+    # 5. Calculate length and width for rectangular shapes
+    if is_rectangular:
+        image, _, _, angle = extract_min_bounding_box(front_global_filename)
+        corrected_image, _ = correct_perspective_horizontal_mab(image, angle, center=None)
+        length, width = calculate_max_dimensions_combined(corrected_image)
 
-    # 5. Extract index of side image filename
+    # 6. Calculate length and width for non-rectangular shapes
+    else:
+        corrected_image = iterative_horizontal_perspection_correction(front_global_filename)
+        length, width = calculate_max_dimensions_combined(corrected_image)
+
+    # 7. Extract index of side image filename
     side_global_filename = extract_side_image(front_global_filename)
 
-    # 6. Apply iterative horizontal perspective correction to side view image
+    # 8. Apply iterative horizontal perspective correction to side view image
     corrected_mask = iterative_horizontal_perspection_correction(side_global_filename)
 
-    # 7. Calculate maximum height from side view image
+    # 9. Calculate maximum height from side view image
     thickness = calculate_maximum_height(corrected_mask)
 
     return length, width, thickness
