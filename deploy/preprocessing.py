@@ -8,6 +8,13 @@ import glob
 def extract_180_frames(video_path, output_folder):
     """
     Extract all 180 frames from the input video and output to a destination folder.
+
+    Args:
+        video_path: Path of input videos.
+        output_folder: Path of output folder.
+
+    Returns:
+        None
     """
     
     if not os.path.exists(output_folder):
@@ -38,6 +45,16 @@ def extract_180_frames(video_path, output_folder):
 
 # Helper function to extract binary mask
 def morphological_gradient_detection(image):
+    """
+    Extract binary masks from all 180 frames from the input video and output to a destination folder.
+
+    Args:
+        image: The input image.
+
+    Returns:
+        image: The processed image.
+    """
+
     # 1. Blur slightly to reduce camera noise, but keep structure
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
 
@@ -71,6 +88,13 @@ def apply_convex_hull(image):
     """
     Robustly finds the gemstone shape using Convex Hull.
     Returns a black mask if no object is found, preventing 'all white' errors.
+
+    Args:
+        image: The input image.
+
+    Returns:
+        image: The processed image.
+
     """
     # 1. Ensure binary
     _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
@@ -138,6 +162,13 @@ def extract_binary_masks(input_folder, output_folder):
     Extract the binary mask from the extracted video frames using the following steps:
     Step 1: Extract binary mask using morphological gradient detection.
     Step 2: Fill holes in the extracted binary masks using convex hull.
+
+    Args:
+        input_folder: The input folder containing 180 video frames.
+        output_folder: The output folder to save the binary masks.
+
+    Returns:
+        None
     """
 
     image_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
@@ -180,17 +211,22 @@ def extract_binary_masks(input_folder, output_folder):
 
 
 # Function to calculate maximum length of binary mask to extract frontal image
-def calculate_maximum_length(binary_mask):
+def calculate_maximum_length(image):
     """
-    Finds the maximum width (length) of the largest BLACK object (contour), 
-    and draws a purely HORIZONTAL line connecting the extreme left/right X-coordinates 
-    at a central Y-reference point.
+    Finds the maximum width (length) of the largest WHITE object (contour)
+
+    Args:
+        image: The input image.
+
+    Returns:
+        tuple: A tuple containing the maximum length, start and end point of the maximum length
+
     """
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
-        print("No black object contours found in the mask.")
-        return cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR), 0.0
+        print("No white object contours found in the mask.")
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), 0.0
 
     # 1. Find the largest contour
     largest_contour = max(contours, key=cv2.contourArea)
@@ -214,6 +250,15 @@ def calculate_maximum_length(binary_mask):
 
 # Function to extract index of frontal image filename
 def extract_frontal_image(input_folder):
+    """
+    Finds the frontal image filename based on maximum length from binary masks.
+
+    Args:
+        input folder: The input folder containing all the 180 processed binary masks.
+
+    Returns:
+        string: A string containing the path of the frontal image filename.
+    """
     image_extensions = ('*.png', '*.jpg', '*.jpeg')
     SAMPLE_SIZE = 5 
     
@@ -264,6 +309,15 @@ def extract_frontal_image(input_folder):
 
 # Function to extract index of side image filename
 def extract_side_image(global_filename):
+    """
+    Finds the side-view image filename based on the frontal image filename.
+
+    Args:
+        global filename: The filename of the frontal image.
+
+    Returns:
+        string: A string containing the path of the side-view image filename.
+    """
     # Extract front view image frame index
     front_view_image = global_filename
     front_view_image_index = front_view_image.split("_")[1]
@@ -280,8 +334,15 @@ def extract_side_image(global_filename):
 # Function to calculate maximum length and width from frontal image
 def calculate_max_dimensions_combined(image):
     """
-    Calculates length and width of frontal image using maximum length and width
+    Calculates length and width of frontal image using maximum length and width.
+
+    Args:
+        image: The input frontal image to process the maximum length and width.
+
+    Returns:
+        tuple: A tuple containing the length and width the frontal image.
     """
+
     # Check the number of dimensions/channels
     if len(image.shape) == 3:
         # If it has 3 dimensions (channels), assume it's color (BGR) and convert to grayscale.
@@ -337,14 +398,14 @@ def calculate_max_dimensions_combined(image):
 # Helper function to apply perspective correction for rectangular shapes
 def extract_min_bounding_box(global_filename):
     """
-    Finds and draws the minimum area bounding box for the main object in an image.
+    Finds the minimum area bounding box for the main object in an image.
 
     Args:
-        global_filename: The input image global filename.
+        global filename: The filename of the frontal image which is rectangular.
 
     Returns:
-        tuple: A tuple containing the drawn image, the width of the bounding box,
-               and the height of the bounding box, or (None, None, None, None) if no contours are found.
+        tuple: A tuple containing the image, width, height and angle of rotation or 
+               (None, None, None, None) if no image was found.
     """
     image_path = "/temp/" + global_filename 
     image = cv2.imread(image_path)
@@ -375,7 +436,13 @@ def extract_min_bounding_box(global_filename):
 def correct_perspective_horizontal_mab(image, angle_deg, center=None):
     """
     Applies rotation based on the angle outputted from extract_min_bounding_box.
-    Returns: rotated_image
+    
+    Args:
+        image: The frontal image which is rectangular.
+        angle_deg: The angle of rotation from the minimum area bounding box.
+
+    Returns:
+        tuple: A tuple containing the rotated image and angle of rotation.
     """
     if image is None:
         return None
@@ -402,27 +469,36 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
 
 # Helper function to detect rectangular shapes
 def calculate_extent(global_filename):
+    """
+    Detect rectangular shape from the input frontal image.
+    
+    Args:
+        global filename: The frontal image to be checked.
+
+    Returns:
+        float: A float containing the extent of the object.
+    """
     image_path = "/temp/" + global_filename 
     gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
-    # Find contours in the grayscale image
+    # 1. Find contours in the grayscale image
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Check if any contours were found
+    # 2. Check if any contours were found
     if not contours:
         print("No contours found.")
         return None
 
-    # Select the largest contour (assumes the shape is the main object)
+    # 3. Select the largest contour (assumes the shape is the main object)
     c = max(contours, key=cv2.contourArea)
 
-    # Get Min Area Rect (Rotated Bounding Box)
+    # 4. Get Min Area Rect (Rotated Bounding Box)
     rect = cv2.minAreaRect(c)
     (_, _), (width, height), _ = rect
     box_area = width * height
     shape_area = cv2.contourArea(c)
 
-    # Extent (How much the shape fills the bounding box)
+    # 5. Extent (How much the shape fills the bounding box)
     extent = shape_area / box_area if box_area > 0 else 0
 
     return extent
@@ -430,7 +506,15 @@ def calculate_extent(global_filename):
 
 # Function to check for rectangular shape
 def check_rectangular(extent):
-    """Checks for rectangular shape based on custom criteria."""
+    """
+    Checks for rectangular shape based on custom criteria.
+    
+    Args:
+        extent: The extent of the object in the frontal image to be checked.
+
+    Returns:
+        bool: A boolean whether the shape is rectangular or not.
+    """
     is_rectangular = (extent >= 0.85)
     if is_rectangular:
         print("✅ Shape detected as RECTANGULAR!")
@@ -451,7 +535,7 @@ def correct_perspective_horizontal(image, A, B):
         B (tuple): (x, y) coordinates of point B.
 
     Returns:
-        np.array: The corrected (rotated) image.
+        tuple: The tuple containing the corrected (rotated) image and angle of rotation.
     """
     # Ensure image is not None/empty
     if image is None:
@@ -481,9 +565,17 @@ def correct_perspective_horizontal(image, A, B):
     return rotated_image, rotation_angle
 
 
-# Function to apply iterative horizontal perspective correction
+# Function to apply iterative horizontal perspective correction for non-rectangular shapes
 def iterative_horizontal_perspection_correction(global_filename):
-    """" Apply iterative horizontal perspective correction till convergence"""
+    """" 
+    Apply iterative horizontal perspective correction till convergence for non-rectangular shapes.
+    
+    Args:
+        global filename: The filename of the input frontal image.
+
+    Returns:
+        image (np.array): The rotated (corrected) image.
+    """
     image_path = "/temp/" + global_filename 
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
@@ -555,17 +647,21 @@ def iterative_horizontal_perspection_correction(global_filename):
 
 
 # Function to calculate maximum height from side view image
-def calculate_maximum_height(binary_mask):
+def calculate_maximum_height(image):
     """
-    Finds the maximum height of the largest black object (contour), 
-    and draws a purely VERTICAL line connecting the extreme top/bottom Y-coordinates 
-    at a central X-reference point.
+    Finds the maximum height of the largest WHITE object (contour).
+
+     Args:
+        image (np.array): The input side view image.
+
+    Returns:
+        float: The maximum height of the side view image.
     """
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_height = 0.0
     conversion_factor = 0.00274 * 2
     
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
         print("No black object contours found in the mask.")
@@ -591,6 +687,17 @@ def calculate_maximum_height(binary_mask):
 
 # Function to process dimensions
 def process_dimensions(video_path, input_folder, output_folder):
+    """
+    Finds the length, width and thickness of the input video.
+
+     Args:
+        video: The input video.
+        input_folder: The input folder containing the extracted 180 video frames.
+        output_folder: The output folder to save the binary masks.
+        
+    Returns:
+        tuple: The tuple containing the length, width and thickness of the input video.
+    """
     # 1. Extract 180 video frames
     extract_180_frames(video_path, output_folder)
 
