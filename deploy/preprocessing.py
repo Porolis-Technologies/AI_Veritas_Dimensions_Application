@@ -210,7 +210,7 @@ def extract_binary_masks(input_folder, output_folder):
             print("\nAll images processed successfully.")
 
 
-# Function to calculate maximum length of binary mask to extract frontal image
+# Function to calculate maximum length of binary mask to extract top-view image
 def calculate_maximum_length(image):
     """
     Finds the maximum width (length) of the largest WHITE object (contour)
@@ -248,16 +248,16 @@ def calculate_maximum_length(image):
     return float(maximum_length), start_point_hypotenuse, end_point_hypotenuse
 
 
-# Function to extract index of frontal image filename
-def extract_frontal_image(input_folder):
+# Function to extract index of top-view image filename
+def extract_top_view_image(input_folder):
     """
-    Finds the frontal image filename based on maximum length from binary masks.
+    Finds the top-view image filename based on maximum length from binary masks.
 
     Args:
         input folder: The input folder containing all the 180 processed binary masks.
 
     Returns:
-        string: A string containing the path of the frontal image filename.
+        string: A string containing the path of the top-view image filename.
     """
     image_extensions = ('*.png', '*.jpg', '*.jpeg')
     SAMPLE_SIZE = 5 
@@ -307,40 +307,40 @@ def extract_frontal_image(input_folder):
         print(f"Could not find a valid frame with length data in the first {SAMPLE_SIZE} frames.")
 
 
-# Function to extract index of side image filename
+# Function to extract index of side-view image filename
 def extract_side_image(global_filename):
     """
-    Finds the side-view image filename based on the frontal image filename.
+    Finds the side-view image filename based on the top-view image filename.
 
     Args:
-        global filename: The filename of the frontal image.
+        global filename: The filename of the top-view image.
 
     Returns:
         string: A string containing the path of the side-view image filename.
     """
-    # Extract front view image frame index
-    front_view_image = global_filename
-    front_view_image_index = front_view_image.split("_")[1]
-    front_view_image_index = int(front_view_image_index.split(".")[0])
+    # Extract top-view image frame index
+    top_view_image = global_filename
+    top_view_image_index = top_view_image.split("_")[1]
+    top_view_image_index = int(top_view_image_index.split(".")[0])
 
     # Extract front view image frame index
-    side_view_image_index = front_view_image_index + 45
+    side_view_image_index = top_view_image_index + 45
     side_view_image = "frame_00" + str(side_view_image_index) + ".png"
     print(f"side view image filename: {side_view_image}") 
 
     return side_view_image
 
 
-# Function to calculate maximum length and width from frontal image
+# Function to calculate maximum length and width from top-view image
 def calculate_max_dimensions_combined(image):
     """
-    Calculates length and width of frontal image using maximum length and width.
+    Calculates length and width of top-view image using maximum length and width.
 
     Args:
-        image: The input frontal image to process the maximum length and width.
+        image: The input top-view image to process the maximum length and width.
 
     Returns:
-        tuple: A tuple containing the length and width the frontal image.
+        tuple: A tuple containing the length and width the top-view image.
     """
 
     # Check the number of dimensions/channels
@@ -401,7 +401,7 @@ def extract_min_bounding_box(global_filename):
     Finds the minimum area bounding box for the main object in an image.
 
     Args:
-        global filename: The filename of the frontal image which is rectangular.
+        global filename: The filename of the top-view image which is rectangular.
 
     Returns:
         tuple: A tuple containing the image, width, height and angle of rotation or 
@@ -438,7 +438,7 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
     Applies rotation based on the angle outputted from extract_min_bounding_box.
     
     Args:
-        image: The frontal image which is rectangular.
+        image: The top-view image which is rectangular.
         angle_deg: The angle of rotation from the minimum area bounding box.
 
     Returns:
@@ -470,10 +470,10 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
 # Helper function to detect rectangular shapes
 def calculate_extent(global_filename):
     """
-    Detect rectangular shape from the input frontal image.
+    Detect rectangular shape from the input top-view image.
     
     Args:
-        global filename: The frontal image to be checked.
+        global filename: The top-view image to be checked.
 
     Returns:
         float: A float containing the extent of the object.
@@ -510,7 +510,7 @@ def check_rectangular(extent):
     Checks for rectangular shape based on custom criteria.
     
     Args:
-        extent: The extent of the object in the frontal image to be checked.
+        extent: The extent of the object in the top-view image to be checked.
 
     Returns:
         bool: A boolean whether the shape is rectangular or not.
@@ -565,13 +565,13 @@ def correct_perspective_horizontal(image, A, B):
     return rotated_image, rotation_angle
 
 
-# Function to apply iterative horizontal perspective correction for non-rectangular shapes
+# Function to apply iterative horizontal perspective correction
 def iterative_horizontal_perspection_correction(global_filename):
     """" 
-    Apply iterative horizontal perspective correction till convergence for non-rectangular shapes.
+    Apply iterative horizontal perspective correction till convergence.
     
     Args:
-        global filename: The filename of the input frontal image.
+        global filename: The filename of the input top- or side-view image.
 
     Returns:
         image (np.array): The rotated (corrected) image.
@@ -646,16 +646,16 @@ def iterative_horizontal_perspection_correction(global_filename):
     return binary_mask
 
 
-# Function to calculate maximum height from side view image
+# Function to calculate maximum height from side-view image
 def calculate_maximum_height(image):
     """
     Finds the maximum height of the largest WHITE object (contour).
 
      Args:
-        image (np.array): The input side view image.
+        image (np.array): The input side-view image.
 
     Returns:
-        float: The maximum height of the side view image.
+        float: The maximum height of the side-view image.
     """
     contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_height = 0.0
@@ -704,31 +704,31 @@ def process_dimensions(video_path, input_folder, output_folder):
     # 2. Extract binary mask
     extract_binary_masks(input_folder, output_folder)
 
-    # 3. Extract index of frontal image filename
-    front_global_filename = extract_frontal_image(input_folder)
+    # 3. Extract index of top-view image filename
+    top_global_filename = extract_top_view_image(input_folder)
 
     # 4. Check for rectangular shape
-    extent = calculate_extent(front_global_filename)
+    extent = calculate_extent(top_global_filename)
     is_rectangular = check_rectangular(extent)
     
     # 5. Calculate length and width for rectangular shapes
     if is_rectangular:
-        image, _, _, angle = extract_min_bounding_box(front_global_filename)
+        image, _, _, angle = extract_min_bounding_box(top_global_filename)
         corrected_image, _ = correct_perspective_horizontal_mab(image, angle, center=None)
         length, width = calculate_max_dimensions_combined(corrected_image)
 
     # 6. Calculate length and width for non-rectangular shapes
     else:
-        corrected_image = iterative_horizontal_perspection_correction(front_global_filename)
+        corrected_image = iterative_horizontal_perspection_correction(top_global_filename)
         length, width = calculate_max_dimensions_combined(corrected_image)
 
-    # 7. Extract index of side image filename
-    side_global_filename = extract_side_image(front_global_filename)
+    # 7. Extract index of side-view image filename
+    side_global_filename = extract_side_image(top_global_filename)
 
-    # 8. Apply iterative horizontal perspective correction to side view image
+    # 8. Apply iterative horizontal perspective correction to side-view image
     corrected_mask = iterative_horizontal_perspection_correction(side_global_filename)
 
-    # 9. Calculate maximum height from side view image
+    # 9. Calculate maximum height from side-view image
     thickness = calculate_maximum_height(corrected_mask)
 
     return length, width, thickness
