@@ -467,47 +467,10 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
     return rotated_image, rotation_angle
 
 
-# Helper function to detect rectangular shapes
-def calculate_extent(global_filename):
+# Function to check for shape
+def check_shape(shape):
     """
-    Detect rectangular shape from the input top-view image.
-    
-    Args:
-        global filename: The top-view image to be checked.
-
-    Returns:
-        float: A float containing the extent of the object.
-    """
-    image_path = "/temp/" + global_filename 
-    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-
-    # 1. Find contours in the grayscale image
-    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # 2. Check if any contours were found
-    if not contours:
-        print("No contours found.")
-        return None
-
-    # 3. Select the largest contour (assumes the shape is the main object)
-    c = max(contours, key=cv2.contourArea)
-
-    # 4. Get Min Area Rect (Rotated Bounding Box)
-    rect = cv2.minAreaRect(c)
-    (_, _), (width, height), _ = rect
-    box_area = width * height
-    shape_area = cv2.contourArea(c)
-
-    # 5. Extent (How much the shape fills the bounding box)
-    extent = shape_area / box_area if box_area > 0 else 0
-
-    return extent
-
-
-# Function to check for rectangular shape
-def check_rectangular(extent):
-    """
-    Checks for rectangular shape based on custom criteria.
+    Checks for shape based on custom criteria from shape API.
     
     Args:
         extent: The extent of the object in the top-view image to be checked.
@@ -515,11 +478,47 @@ def check_rectangular(extent):
     Returns:
         bool: A boolean whether the shape is rectangular or not.
     """
-    is_rectangular = (extent >= 0.85)
-    if is_rectangular:
+    is_rectangular = False
+    if shape == "Rectangular":
+        is_rectangular = True
         print("✅ Shape detected as RECTANGULAR!")
+    elif shape == "Rectangular Cushion":
+        is_rectangular = True
+        print("✅ Shape detected as RECTANGULAR CUSHION!")
+    elif shape == "Square":
+        is_rectangular = True
+        print("✅ Shape detected as SQUARE!")
+    elif shape == "Square Cushion":
+        is_rectangular = True
+        print("✅ Shape detected as SQUARE CUSHION!")
+    elif shape == "Oval":
+        is_rectangular = False
+        print("❌ Shape detected as OVAL!")
+    elif shape == "Round":
+        is_rectangular = False
+        print("❌ Shape detected as ROUND!")
+    elif shape == "Marquise":
+        is_rectangular = False
+        print("❌ Shape detected as MARQUISE!")
+    elif shape == "Heart":
+        is_rectangular = False
+        print("❌ Shape detected as HEART!")    
+    elif shape == "Hexagonal":
+        is_rectangular = True
+        print("✅ Shape detected as HEXAGONAL!")
+    elif shape == "Triangular / Trilliant":     
+        is_rectangular = False
+        print("❌ Shape detected as TRIANGULAR / TRILLIANT!")   
+    elif shape == "Triangular Cushion":
+        is_rectangular = True
+        print("❌ Shape detected as TRIANGULAR CUSHION!")
+    elif shape == "Fancy":
+        is_rectangular = False
+        print("❌ Shape detected as FANCY!")
     else:
+        is_rectangular = False
         print(f"❌ Shape is NOT rectangular.")
+
     return is_rectangular
 
 
@@ -686,7 +685,7 @@ def calculate_maximum_height(image):
 
 
 # Function to process dimensions
-def process_dimensions(video_path, input_folder, output_folder):
+def process_dimensions(video_path, input_folder, output_folder, shape):
     """
     Finds the length, width and thickness of the input video.
 
@@ -708,8 +707,7 @@ def process_dimensions(video_path, input_folder, output_folder):
     top_global_filename = extract_top_view_image(input_folder)
 
     # 4. Check for rectangular shape
-    extent = calculate_extent(top_global_filename)
-    is_rectangular = check_rectangular(extent)
+    is_rectangular = check_shape(shape)
     
     # 5. Calculate length and width for rectangular shapes
     if is_rectangular:

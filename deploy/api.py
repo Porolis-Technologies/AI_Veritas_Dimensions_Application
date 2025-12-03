@@ -41,7 +41,7 @@ class GemstoneDimensionsCalculationResponse(BaseModel):
     response_model=GemstoneDimensionsCalculationResponse,
     tags=["GemstoneDimensionsCalculation"],
 )
-async def calculate_gemstone_dimensions(input_path: str = Query(...)) -> GemstoneDimensionsCalculationResponse:
+async def calculate_gemstone_dimensions(input_path: str = Query(...), shape: str = Query(...)) -> GemstoneDimensionsCalculationResponse:
     downloaded_video_path = None
 
     try:
@@ -65,7 +65,8 @@ async def calculate_gemstone_dimensions(input_path: str = Query(...)) -> Gemston
             pipe,
             video_path=video_path,
             input_folder=input_folder,
-            output_folder=output_folder 
+            output_folder=output_folder, 
+            shape=shape
         )
         logger.info(f"Prediction results: {results}")
 
