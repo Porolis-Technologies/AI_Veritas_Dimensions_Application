@@ -283,22 +283,27 @@ def extract_top_view_image(input_folder):
             all_lengths.append(length)
             processed_count += 1
 
-    analysis_paths = image_paths[:SAMPLE_SIZE]
-    max_first_five = {'path': None, 'length': float('-inf')}
+    total_files = len(image_paths)
+    first_sample_paths = image_paths[:SAMPLE_SIZE]
+    last_sample_paths = image_paths[max(0, total_files - SAMPLE_SIZE):]
+    paths_to_analyze = first_sample_paths + last_sample_paths
     
-    for path in analysis_paths:
+    longest_length = -1.0
+    longest_mask_path = None 
+    
+    for path in paths_to_analyze:
         mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         
         if mask is None:
             continue
             
         length, _, _ = calculate_maximum_length(mask) 
-        if length > max_first_five['length']:
-            max_first_five['length'] = length
-            max_first_five['path'] = path
+        if length > longest_length:
+            longest_length = length
+            longest_mask_path = path
 
-    if max_first_five['path']:
-        global_filename = os.path.basename(max_first_five['path'])
+    if longest_mask_path and longest_length > 0:
+        global_filename = os.path.basename(longest_mask_path)
         global_filename = global_filename.replace(".jpg", ".png")
         print(f"global_filename: {global_filename}")
         
