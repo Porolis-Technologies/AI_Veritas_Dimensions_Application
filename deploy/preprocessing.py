@@ -472,61 +472,6 @@ def correct_perspective_horizontal_mab(image, angle_deg, center=None):
     return rotated_image, rotation_angle
 
 
-# Function to check for shape
-def check_shape(shape):
-    """
-    Checks for shape based on custom criteria from shape API.
-    
-    Args:
-        extent: The extent of the object in the top-view image to be checked.
-
-    Returns:
-        bool: A boolean whether the shape is rectangular or not.
-    """
-    is_rectangular = False
-    if shape == "Rectangular":
-        is_rectangular = True
-        print("✅ Shape detected as RECTANGULAR!")
-    elif shape == "Rectangular Cushion":
-        is_rectangular = True
-        print("✅ Shape detected as RECTANGULAR CUSHION!")
-    elif shape == "Square":
-        is_rectangular = True
-        print("✅ Shape detected as SQUARE!")
-    elif shape == "Square Cushion":
-        is_rectangular = True
-        print("✅ Shape detected as SQUARE CUSHION!")
-    elif shape == "Oval":
-        is_rectangular = False
-        print("❌ Shape detected as OVAL!")
-    elif shape == "Round":
-        is_rectangular = False
-        print("❌ Shape detected as ROUND!")
-    elif shape == "Marquise":
-        is_rectangular = False
-        print("❌ Shape detected as MARQUISE!")
-    elif shape == "Heart":
-        is_rectangular = False
-        print("❌ Shape detected as HEART!")    
-    elif shape == "Hexagonal":
-        is_rectangular = True
-        print("✅ Shape detected as HEXAGONAL!")
-    elif shape == "Triangular / Trilliant":     
-        is_rectangular = False
-        print("❌ Shape detected as TRIANGULAR / TRILLIANT!")   
-    elif shape == "Triangular Cushion":
-        is_rectangular = True
-        print("❌ Shape detected as TRIANGULAR CUSHION!")
-    elif shape == "Fancy":
-        is_rectangular = False
-        print("❌ Shape detected as FANCY!")
-    else:
-        is_rectangular = False
-        print(f"❌ Shape is NOT rectangular.")
-
-    return is_rectangular
-
-
 # Helper function to apply iterative horizontal perspective correction
 def correct_perspective_horizontal(image, A, B):
     """
@@ -570,7 +515,7 @@ def correct_perspective_horizontal(image, A, B):
 
 
 # Function to apply iterative horizontal perspective correction
-def iterative_horizontal_perspection_correction(global_filename):
+def horizontal_iterative_correction(global_filename):
     """" 
     Apply iterative horizontal perspective correction till convergence.
     
@@ -650,6 +595,80 @@ def iterative_horizontal_perspection_correction(global_filename):
     return binary_mask
 
 
+# Helper function to apply iterative vertical perspective correction
+def correct_perspective_vertical(image, A, B, center=None):
+    """
+    Calculates and applies the rotation needed to make the line connecting A and B vertical.
+    
+    Returns: rotated_image, required_rotation_angle
+    """
+    if image is None:
+        return None, 0.0
+    
+    # 1. Calculate the angle of the line A->B (Theta)
+    angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
+    angle_deg = np.degrees(angle_rad)
+    
+    # Target angle for the line is 90 degrees (downwards on the image plane)
+    rotation_angle = angle_deg - 90.0
+
+    # 2. Define the center of rotation
+    if center is None:
+        (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
+        center = (w // 2, h // 2)
+
+    # 3. Create and apply the rotation matrix
+    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+    (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
+    rotated = cv2.warpAffine(
+        image, 
+        M, 
+        (w, h), 
+        flags=cv2.INTER_CUBIC, 
+        borderMode=cv2.BORDER_CONSTANT, 
+        borderValue=0
+    )
+
+    return rotated, rotation_angle
+
+
+# Function to apply iterative vertical perspective correction
+def vertical_iterative_correction(original_mask):
+    """
+    Applies vertical iterative perspective correction until convergence or divergence.
+    Returns: final_stable_mask, final_angle_used
+    """
+    current_mask = original_mask.copy()
+    
+    (h, w) = original_mask.shape[:2]
+    center = (w // 2, h // 2)
+
+    # 2. ITERATIVE CORRECTION PARAMETERS
+    tolerance = 0.5 # Degrees
+    max_iterations = 20
+    rotation_angle = tolerance + 1.0 # Initialize above tolerance to start the loop
+    iteration = 0
+    
+    print(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{tolerance} deg)...")
+    
+    while abs(rotation_angle) > tolerance and iteration < max_iterations:
+        # A. Find the new extreme points (A and B) on the current mask
+        _, _, A, B = calculate_maximum_height(current_mask)
+        
+        # B. Calculate the rotation needed and apply it
+        current_mask, rotation_angle = correct_perspective_vertical(current_mask, A, B, center)
+        
+        print(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
+
+        if current_mask is None:
+            print("Error during rotation. Stopping loop.")
+            break
+            
+        iteration += 1
+
+    return current_mask, rotation_angle
+
+
 # Function to calculate maximum height from side-view image
 def calculate_maximum_height(image):
     """
@@ -702,6 +721,7 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     Returns:
         tuple: The tuple containing the length, width and thickness of the input video.
     """
+    
     # 1. Extract 180 video frames
     extract_180_frames(video_path, output_folder)
 
@@ -710,26 +730,28 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
 
     # 3. Extract index of top-view image filename
     top_global_filename = extract_top_view_image(input_folder)
-
-    # 4. Check for rectangular shape
-    is_rectangular = check_shape(shape)
     
-    # 5. Calculate length and width for rectangular shapes
-    if is_rectangular:
+    # 4. Calculate length and width for rectangular shapes
+    if shape == "Radiant" or shape == "Emerald" or shape == "Cushion" or shape == "Rectangular Cushion" or shape == "Rectangular" or shape == "Square Cushion" or shape == "Square":
         image, _, _, angle = extract_min_bounding_box(top_global_filename)
         corrected_image, _ = correct_perspective_horizontal_mab(image, angle, center=None)
         length, width = calculate_max_dimensions_combined(corrected_image)
 
-    # 6. Calculate length and width for non-rectangular shapes
+    # 5. Calculate length and width for round shapes
+    elif shape == "Oval" or shape == "Round" or shape == "Pear" or shape == "Other" or shape == "Marquise":
+        corrected_image = horizontal_iterative_correction(top_global_filename)
+        length, width = calculate_max_dimensions_combined(corrected_image)
+
+    # 6. Calculate length and width for heart or triangular shapes
     else:
-        corrected_image = iterative_horizontal_perspection_correction(top_global_filename)
+        corrected_image = vertical_iterative_correction(top_global_filename)
         length, width = calculate_max_dimensions_combined(corrected_image)
 
     # 7. Extract index of side-view image filename
     side_global_filename = extract_side_image(top_global_filename)
 
     # 8. Apply iterative horizontal perspective correction to side-view image
-    corrected_mask = iterative_horizontal_perspection_correction(side_global_filename)
+    corrected_mask = horizontal_iterative_correction(side_global_filename)
 
     # 9. Calculate maximum height from side-view image
     thickness = calculate_maximum_height(corrected_mask)
