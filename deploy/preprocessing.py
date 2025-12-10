@@ -4,10 +4,10 @@ import numpy as np
 import glob 
 
 
-# Function to extract 180 video frames
-def extract_180_frames(video_path, output_folder):
+# Function to extract 20 video frames
+def extract_20_frames(video_path, output_folder):
     """
-    Extract all 180 frames from the input video and output to a destination folder.
+    Extract 20 frames (first and last 5, and frame 40 to 49) from the input video and output to a destination folder.
 
     Args:
         video_path: Path of input videos.
@@ -16,31 +16,94 @@ def extract_180_frames(video_path, output_folder):
     Returns:
         None
     """
-    
+    TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
+    START_FRAME_INDEX = 40              # Start of the fixed middle range
+    END_FRAME_INDEX = 49                # End of the fixed middle range
+    WHITE_BACKGROUND_THRESHOLD = 240    # Average BGR pixel value threshold for the corner regions
+    CORNER_SAMPLE_SIZE = 50             # The side length in pixels of the square region to sample in each corner
+    BORDER_COLOR = (255, 255, 255) 
+    PADDING_THICKNESS = 20 
+
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    vidcap = cv2.VideoCapture(video_path)
-    if not vidcap.isOpened():
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
         raise RuntimeError(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
 
-    TOTAL_FRAMES_TO_PROCESS = 180
-    frames_processed = 0
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    while frames_processed < TOTAL_FRAMES_TO_PROCESS:
-        success, image = vidcap.read()
+    print(f"  Processing video: {os.path.basename(video_path)} | Total Frames: {total_frames}")
 
-        if not success:
-            print(f"Warning: Video ended early at frame {frames_processed}.")
-            break
+    # --- 1. Calculate Target Frame Indices ---
+    if total_frames > TARGET_FRAMES_PER_END:
+        first_frames = list(range(TARGET_FRAMES_PER_END))
+    else:
+        first_frames = list(range(total_frames)) 
+    
+    if total_frames > END_FRAME_INDEX:
+        fixed_frames = list(range(START_FRAME_INDEX, END_FRAME_INDEX + 1))
+    elif total_frames > START_FRAME_INDEX:
+        fixed_frames = list(range(START_FRAME_INDEX, total_frames))
+        print(f"  Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
+    else:
+        fixed_frames = []
+        print(f"  Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
+        
+    last_frames = []
+    if total_frames > 0:
+        last_frames_start_index = max(0, total_frames - TARGET_FRAMES_PER_END)
+        last_frames = list(range(last_frames_start_index, total_frames))
+    
+    combined_indices = sorted(list(set(
+        first_frames + fixed_frames + last_frames
+    )))
+    
+    frame_indices = [idx for idx in combined_indices if idx < total_frames]
 
-        frame_filename = os.path.join(output_folder, f"frame_{frames_processed:04d}.jpg")
-        cv2.imwrite(frame_filename, image)
-        print(f"Extracted Frame {frames_processed} (Saved as {os.path.basename(frame_filename)})")
-        frames_processed += 1 
+    print(f"  Total frames to attempt extraction: {len(frame_indices)}")
 
-    vidcap.release()
-    print(f"Total frames processed: {frames_processed}")
+    # --- 2. Define Corner Sample Boxes (BL and BR) ---
+    corner_boxes = [
+        (0, frame_height - CORNER_SAMPLE_SIZE, CORNER_SAMPLE_SIZE, frame_height),
+        (frame_width - CORNER_SAMPLE_SIZE, frame_height - CORNER_SAMPLE_SIZE, frame_width, frame_height)
+    ]
+    
+    # --- 3. Extract and Process Frames ---
+    frames_saved_count = 0
+    
+    for frame_index in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        
+        ret, frame = cap.read()
+        if not ret:
+            print(f"  Error: Failed to read frame {frame_index}. Skipping.")
+            continue
+
+        corner_intensities = []
+        for x_start, y_start, x_end, y_end in corner_boxes:
+            corner_region = frame[y_start:y_end, x_start:x_end]
+            corner_intensities.append(np.mean(corner_region))
+
+        overall_corner_average = np.mean(corner_intensities) if corner_intensities else 0 
+
+        if overall_corner_average >= WHITE_BACKGROUND_THRESHOLD:
+            cv2.rectangle(
+                img=frame,
+                pt1=(0, 0),
+                pt2=(frame_width - 1, frame_height - 1),
+                color=BORDER_COLOR,
+                thickness=PADDING_THICKNESS
+            )
+
+            frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
+            cv2.imwrite(frame_filename, frame)
+            frames_saved_count += 1
+
+    cap.release()
+    print(f" Completed: {frames_saved_count} frames saved.")
 
 
 # Helper function to extract binary mask
@@ -164,14 +227,14 @@ def extract_binary_masks(input_folder, output_folder):
     Step 2: Fill holes in the extracted binary masks using convex hull.
 
     Args:
-        input_folder: The input folder containing 180 video frames.
+        input_folder: The input folder containing 20 video frames.
         output_folder: The output folder to save the binary masks.
 
     Returns:
         None
     """
 
-    image_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
+    image_extensions = ('.jpg')
 
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -181,7 +244,7 @@ def extract_binary_masks(input_folder, output_folder):
         print(f"Error: Input directory '{input_folder}' not found.")
     else:
         image_files = os.listdir(input_folder)
-        image_files = [i for i in image_files if i.split(".")[-1] !="png"]
+        image_files = [i for i in image_files if i.lower().endswith('.jpg')]
         image_files.sort()
 
         if not image_files:
@@ -254,7 +317,7 @@ def extract_top_view_image(input_folder):
     Finds the top-view image filename based on maximum length from binary masks.
 
     Args:
-        input folder: The input folder containing all the 180 processed binary masks.
+        input folder: The input folder containing all the 20 processed binary masks.
 
     Returns:
         string: A string containing the path of the top-view image filename.
@@ -722,8 +785,8 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
         tuple: The tuple containing the length, width and thickness of the input video.
     """
     
-    # 1. Extract 180 video frames
-    extract_180_frames(video_path, output_folder)
+    # 1. Extract 20 video frames
+    extract_20_frames(video_path, output_folder)
 
     # 2. Extract binary mask
     extract_binary_masks(input_folder, output_folder)
