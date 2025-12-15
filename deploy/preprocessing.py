@@ -3,7 +3,7 @@ import os
 import numpy as np
 import glob 
 
-THRESHOLD = 0.80                    # Extent threshold for rule-based perspective correction of side-view image
+THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
 
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
