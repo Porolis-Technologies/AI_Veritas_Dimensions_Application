@@ -3,6 +3,7 @@ import os
 import numpy as np
 import glob 
 
+THRESHOLD = 0.80                    # Extent threshold for rule-based perspective correction of side-view image
 
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
@@ -501,7 +502,7 @@ def extract_min_bounding_box(global_filename):
 
 
 # Helper function to apply perspective correction for rectangular shapes
-def correct_perspective_horizontal_mab(image, angle_deg, center=None):
+def correct_perspective_min_bounding_box_top_view(image, angle_deg, center=None):
     """
     Applies rotation based on the angle outputted from extract_min_bounding_box.
     
@@ -732,6 +733,82 @@ def vertical_iterative_correction(original_mask):
     return current_mask, rotation_angle
 
 
+# Function to determine criteria for rule-based perspective for side-view image
+def calculate_extent(global_filename):
+    image_path = "/temp/" + global_filename 
+    image = cv2.imread(image_path)
+
+    if len(image.shape) == 3:
+        # Convert BGR (3-channel) to Grayscale (1-channel)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
+    else:
+        # Assume it's already Grayscale (1-channel)
+        gray = image
+
+    # Find contours in the grayscale image
+    # RETR_EXTERNAL retrieves only the outer contours
+    # CHAIN_APPROX_SIMPLE compresses horizontal, vertical, and diagonal segments
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Check if any contours were found
+    if not contours:
+        print("No contours found.")
+        return None
+
+    # Select the largest contour (assumes the shape is the main object)
+    # This converts the list of contours into a single contour array 'c'
+    c = max(contours, key=cv2.contourArea)
+
+    # Get Min Area Rect (Rotated Bounding Box)
+    rect = cv2.minAreaRect(c)
+    (_, _), (width, height), _ = rect
+    box_area = width * height
+    shape_area = cv2.contourArea(c)
+
+    # Extent (How much the shape fills the bounding box)
+    extent = shape_area / box_area if box_area > 0 else 0
+
+    return extent
+
+
+# Function to apply perspective correction using minimum bounding box for side-view image
+def correct_perspective_min_bounding_box_side_view(image, width_rect, height_rect, angle_deg, center=None):
+    """
+    Calculates the rotation angle needed to align the *longest* side (the length) 
+    horizontally, and applies that rotation to the image.
+    
+    Args:
+        image (np.ndarray): The image to be rotated (can be BGR or single-channel).
+        width_rect (float): The width of the minAreaRect.
+        height_rect (float): The height of the minAreaRect.
+        angle_deg (float): The rotation angle of the minAreaRect (-90 to 0).
+        center (tuple): Center of rotation (default is image center).
+
+    Returns: 
+        rotated_image (np.ndarray): The perspective-corrected image.
+    """
+    if image is None:
+        return None
+    
+    if width_rect >= height_rect:
+        rotation_angle = angle_deg
+    else:
+        rotation_angle = angle_deg + 90
+    print(f"   Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
+
+    # Define the center of rotation and dimensions
+    (h, w) = image.shape[:2]
+    if center is None:
+        center = (w // 2, h // 2)
+
+    # Create the rotation matrix
+    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+
+    # Apply the rotation
+    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    return rotated
+
 # Function to calculate maximum height from side-view image
 def calculate_maximum_height(image):
     """
@@ -743,11 +820,17 @@ def calculate_maximum_height(image):
     Returns:
         float: The maximum height of the side-view image.
     """
-    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_height = 0.0
     conversion_factor = 0.00274 * 2
     
-    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(image.shape) == 3:
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        _, binary_mask = cv2.threshold(gray_image, 1, 255, cv2.THRESH_BINARY)
+        contour_image = binary_mask
+    else:
+        contour_image = image
+
+    contours, _ = cv2.findContours(contour_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
         print("No black object contours found in the mask.")
@@ -769,7 +852,6 @@ def calculate_maximum_height(image):
     print(f"Thickness: {height} mm")
 
     return float(height)
-
 
 # Function to process dimensions
 def process_dimensions(video_path, input_folder, output_folder, shape):
@@ -794,29 +876,39 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     # 3. Extract index of top-view image filename
     top_global_filename = extract_top_view_image(input_folder)
     
-    # 4. Calculate length and width for rectangular shapes
+    # 4. Apply minimum bounding box perspective correction for rectangular shapes
     if shape == "Radiant" or shape == "Emerald" or shape == "Cushion" or shape == "Rectangular Cushion" or shape == "Rectangular" or shape == "Square Cushion" or shape == "Square":
         image, _, _, angle = extract_min_bounding_box(top_global_filename)
-        corrected_image, _ = correct_perspective_horizontal_mab(image, angle, center=None)
-        length, width = calculate_max_dimensions_combined(corrected_image)
+        corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
-    # 5. Calculate length and width for round shapes
+    # 5. Apply iterative horizontal perspective correcion for round shape
     elif shape == "Oval" or shape == "Round" or shape == "Pear" or shape == "Other" or shape == "Marquise":
         corrected_image = horizontal_iterative_correction(top_global_filename)
-        length, width = calculate_max_dimensions_combined(corrected_image)
 
-    # 6. Calculate length and width for heart or triangular shapes
+    # 6. Apply iterative vertical perspective correction for heart or triangular shapes
     else:
         corrected_image = vertical_iterative_correction(top_global_filename)
-        length, width = calculate_max_dimensions_combined(corrected_image)
 
-    # 7. Extract index of side-view image filename
+    # 7. Calculate maximum length and width from top-view image     
+    length, width = calculate_max_dimensions_combined(corrected_image)
+
+    # 8. Extract index of side-view image filename
     side_global_filename = extract_side_image(top_global_filename)
 
-    # 8. Apply iterative horizontal perspective correction to side-view image
-    corrected_mask = horizontal_iterative_correction(side_global_filename)
+    # 9. Calculate extent of side-view image for rule-based perspective correction
+    extent = calculate_extent(side_global_filename)
 
-    # 9. Calculate maximum height from side-view image
-    thickness = calculate_maximum_height(corrected_mask)
+    if extent < THRESHOLD:
+        # 10. Apply iterative horizontal perspective correction to side-view image
+        corrected_image_side = horizontal_iterative_correction(side_global_filename)
+    else:
+        # 11. Apply minimum bounding box perspective correction to side-view image
+        image, width_rect, height_rect, angle_rect = extract_min_bounding_box(side_global_filename)
+
+        # 12. Apply perspective correction to side-view image
+        corrected_image_side = correct_perspective_min_bounding_box_side_view(image, width_rect, height_rect, angle_rect)
+
+    # 13. Calculate maximum height from side-view image
+    thickness = calculate_maximum_height(corrected_image_side)
 
     return length, width, thickness
