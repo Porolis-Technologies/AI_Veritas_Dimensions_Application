@@ -42,33 +42,20 @@ class GemstoneDimensionsCalculationResponse(BaseModel):
     tags=["GemstoneDimensionsCalculation"],
 )
 async def calculate_gemstone_dimensions(input_path: str = Query(...), shape: str = Query(...)) -> GemstoneDimensionsCalculationResponse:
-    downloaded_video_path = None
-
     try:
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_input_file:
-            downloaded_video_path = temp_input_file.name
-            await asyncio.to_thread(download_file_from_s3, input_path, downloaded_video_path)
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as temp_input_file:
+            video_path = temp_input_file.name
+            await asyncio.to_thread(download_file_from_s3, input_path, video_path)
 
-        video_path = downloaded_video_path
-        
-        # DEBUGGING: Check existence and permissions
-        logger.info(f"File exists: {os.path.exists(video_path)}")
-        if os.path.exists(video_path):
-            logger.info(f"File permissions: {oct(os.stat(video_path).st_mode)}")
-        
-        input_folder = "/temp"
-        output_folder = "/temp"
-
-        pipe = InferencePipeline()
-
-        results = await asyncio.to_thread(
-            pipe,
-            video_path=video_path,
-            input_folder=input_folder,
-            output_folder=output_folder, 
-            shape=shape
-        )
-        logger.info(f"Prediction results: {results}")
+            with tempfile.TemporaryDirectory() as temp_folder:
+                results = await asyncio.to_thread(
+                    pipe,
+                    video_path=video_path,
+                    input_folder=temp_folder,
+                    output_folder=temp_folder, 
+                    shape=shape
+                )
+                logger.info(f"Prediction results: {results}")
 
         return GemstoneDimensionsCalculationResponse(
             gemstone_length_prediction=results["GemstoneLengthPrediction"],

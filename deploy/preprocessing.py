@@ -5,6 +5,7 @@ import glob
 
 THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
 
+
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
     """
@@ -67,10 +68,10 @@ def extract_20_frames(video_path, output_folder):
     print(f"  Total frames to attempt extraction: {len(frame_indices)}")
 
     # --- 2. Define Corner Sample Boxes (BL and BR) ---
-    corner_boxes = [
-        (0, frame_height - CORNER_SAMPLE_SIZE, CORNER_SAMPLE_SIZE, frame_height),
-        (frame_width - CORNER_SAMPLE_SIZE, frame_height - CORNER_SAMPLE_SIZE, frame_width, frame_height)
-    ]
+    #corner_boxes = [
+    #    (0, frame_height - CORNER_SAMPLE_SIZE, CORNER_SAMPLE_SIZE, frame_height),
+    #    (frame_width - CORNER_SAMPLE_SIZE, frame_height - CORNER_SAMPLE_SIZE, frame_width, frame_height)
+    #]
     
     # --- 3. Extract and Process Frames ---
     frames_saved_count = 0
@@ -83,25 +84,25 @@ def extract_20_frames(video_path, output_folder):
             print(f"  Error: Failed to read frame {frame_index}. Skipping.")
             continue
 
-        corner_intensities = []
-        for x_start, y_start, x_end, y_end in corner_boxes:
-            corner_region = frame[y_start:y_end, x_start:x_end]
-            corner_intensities.append(np.mean(corner_region))
+        #corner_intensities = []
+        #for x_start, y_start, x_end, y_end in corner_boxes:
+        #    corner_region = frame[y_start:y_end, x_start:x_end]
+        #    corner_intensities.append(np.mean(corner_region))
 
-        overall_corner_average = np.mean(corner_intensities) if corner_intensities else 0 
+        #overall_corner_average = np.mean(corner_intensities) if corner_intensities else 0 
 
-        if overall_corner_average >= WHITE_BACKGROUND_THRESHOLD:
-            cv2.rectangle(
-                img=frame,
-                pt1=(0, 0),
-                pt2=(frame_width - 1, frame_height - 1),
-                color=BORDER_COLOR,
-                thickness=PADDING_THICKNESS
-            )
+        #if overall_corner_average >= WHITE_BACKGROUND_THRESHOLD:
+        #    cv2.rectangle(
+        #        img=frame,
+        #        pt1=(0, 0),
+        #        pt2=(frame_width - 1, frame_height - 1),
+        #        color=BORDER_COLOR,
+        #        thickness=PADDING_THICKNESS
+        #    )
 
-            frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
-            cv2.imwrite(frame_filename, frame)
-            frames_saved_count += 1
+        frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
+        cv2.imwrite(frame_filename, frame)
+        frames_saved_count += 1
 
     cap.release()
     print(f" Completed: {frames_saved_count} frames saved.")
@@ -476,7 +477,7 @@ def extract_min_bounding_box(global_filename):
         tuple: A tuple containing the image, width, height and angle of rotation or 
                (None, None, None, None) if no image was found.
     """
-    image_path = "/temp/" + global_filename 
+    image_path = global_filename 
     image = cv2.imread(image_path)
     if image is None:
         print(f"Error: Could not load image from {image_path}")
@@ -589,7 +590,7 @@ def horizontal_iterative_correction(global_filename):
     Returns:
         image (np.array): The rotated (corrected) image.
     """
-    image_path = "/temp/" + global_filename 
+    image_path = global_filename 
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     MAX_ITERATIONS = 10
@@ -735,7 +736,7 @@ def vertical_iterative_correction(original_mask):
 
 # Function to determine criteria for rule-based perspective for side-view image
 def calculate_extent(global_filename):
-    image_path = "/temp/" + global_filename 
+    image_path = global_filename 
     image = cv2.imread(image_path)
 
     if len(image.shape) == 3:
@@ -809,6 +810,7 @@ def correct_perspective_min_bounding_box_side_view(image, width_rect, height_rec
 
     return rotated
 
+
 # Function to calculate maximum height from side-view image
 def calculate_maximum_height(image):
     """
@@ -853,6 +855,7 @@ def calculate_maximum_height(image):
 
     return float(height)
 
+
 # Function to process dimensions
 def process_dimensions(video_path, input_folder, output_folder, shape):
     """
@@ -878,12 +881,12 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     
     # 4. Apply minimum bounding box perspective correction for rectangular shapes
     if shape == "Radiant" or shape == "Emerald" or shape == "Cushion" or shape == "Rectangular Cushion" or shape == "Rectangular" or shape == "Square Cushion" or shape == "Square":
-        image, _, _, angle = extract_min_bounding_box(top_global_filename)
+        image, _, _, angle = extract_min_bounding_box(os.path.join(input_folder, top_global_filename))
         corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
     # 5. Apply iterative horizontal perspective correcion for round shape
     elif shape == "Oval" or shape == "Round" or shape == "Pear" or shape == "Other" or shape == "Marquise":
-        corrected_image = horizontal_iterative_correction(top_global_filename)
+        corrected_image = horizontal_iterative_correction(os.path.join(input_folder, top_global_filename))
 
     # 6. Apply iterative vertical perspective correction for heart or triangular shapes
     else:
@@ -896,14 +899,14 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     side_global_filename = extract_side_image(top_global_filename)
 
     # 9. Calculate extent of side-view image for rule-based perspective correction
-    extent = calculate_extent(side_global_filename)
+    extent = calculate_extent(os.path.join(input_folder, side_global_filename))
 
     if extent < THRESHOLD:
         # 10. Apply iterative horizontal perspective correction to side-view image
-        corrected_image_side = horizontal_iterative_correction(side_global_filename)
+        corrected_image_side = horizontal_iterative_correction(os.path.join(input_folder, side_global_filename))
     else:
         # 11. Apply minimum bounding box perspective correction to side-view image
-        image, width_rect, height_rect, angle_rect = extract_min_bounding_box(side_global_filename)
+        image, width_rect, height_rect, angle_rect = extract_min_bounding_box(os.path.join(input_folder, side_global_filename))
 
         # 12. Apply perspective correction to side-view image
         corrected_image_side = correct_perspective_min_bounding_box_side_view(image, width_rect, height_rect, angle_rect)
