@@ -2,6 +2,9 @@ import cv2
 import os
 import numpy as np
 import glob 
+from deploy.config import get_logger
+
+logger = get_logger(__name__)
 
 THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
 
@@ -36,7 +39,7 @@ def extract_20_frames(video_path, output_folder):
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    print(f"  Processing video: {os.path.basename(video_path)} | Total Frames: {total_frames}")
+    logger.info(f"Processing video: {os.path.basename(video_path)} | Total Frames: {total_frames}")
 
     # --- 1. Calculate Target Frame Indices ---
     if total_frames > TARGET_FRAMES_PER_END:
@@ -48,10 +51,10 @@ def extract_20_frames(video_path, output_folder):
         fixed_frames = list(range(START_FRAME_INDEX, END_FRAME_INDEX + 1))
     elif total_frames > START_FRAME_INDEX:
         fixed_frames = list(range(START_FRAME_INDEX, total_frames))
-        print(f"  Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
+        logger.info(f"  Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
     else:
         fixed_frames = []
-        print(f"  Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
+        logger.info(f"  Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
         
     last_frames = []
     if total_frames > 0:
@@ -64,7 +67,7 @@ def extract_20_frames(video_path, output_folder):
     
     frame_indices = [idx for idx in combined_indices if idx < total_frames]
 
-    print(f"  Total frames to attempt extraction: {len(frame_indices)}")
+    logger.info(f"Total frames to attempt extraction: {len(frame_indices)}")
 
     # --- 2. Define Corner Sample Boxes (BL and BR) ---
     corner_boxes = [
@@ -80,7 +83,7 @@ def extract_20_frames(video_path, output_folder):
         
         ret, frame = cap.read()
         if not ret:
-            print(f"  Error: Failed to read frame {frame_index}. Skipping.")
+            logger.info(f"Error: Failed to read frame {frame_index}. Skipping.")
             continue
 
         corner_intensities = []
@@ -104,7 +107,7 @@ def extract_20_frames(video_path, output_folder):
             frames_saved_count += 1
 
     cap.release()
-    print(f" Completed: {frames_saved_count} frames saved.")
+    logger.info(f" Completed: {frames_saved_count} frames saved.")
 
 
 # Helper function to extract binary mask
@@ -177,7 +180,7 @@ def apply_convex_hull(image):
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
-        print("   -> No contours found. Returning empty black mask.")
+        logger.info("   -> No contours found. Returning empty black mask.")
         return final_mask
 
     # 4. Filter Contours
@@ -203,7 +206,7 @@ def apply_convex_hull(image):
             if cw < w or ch < h: 
                 valid_contours.append(largest_raw)
             else:
-                print("   -> Only found image frame/border. Returning empty mask.")
+                logger.info("   -> Only found image frame/border. Returning empty mask.")
                 return final_mask
         else:
             return final_mask
@@ -239,17 +242,17 @@ def extract_binary_masks(input_folder, output_folder):
 
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
-        print(f"Created output directory: {output_folder}")
+        logger.info(f"Created output directory: {output_folder}")
 
     if not os.path.exists(input_folder):
-        print(f"Error: Input directory '{input_folder}' not found.")
+        logger.info(f"Error: Input directory '{input_folder}' not found.")
     else:
         image_files = os.listdir(input_folder)
         image_files = [i for i in image_files if i.lower().endswith('.jpg')]
         image_files.sort()
 
         if not image_files:
-            print(f"No images found in the directory: {input_folder}")
+            logger.info(f"No images found in the directory: {input_folder}")
         else:
             for filename in image_files:
                 if filename.lower().endswith(image_extensions):
@@ -257,7 +260,7 @@ def extract_binary_masks(input_folder, output_folder):
                     image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
                     
                     if image is None:
-                        print(f"Warning: Could not read image {filename}. Skipping.")
+                        logger.info(f"Warning: Could not read image {filename}. Skipping.")
                         continue
                     
                     # 1. Apply morphological gradient detection
@@ -269,9 +272,9 @@ def extract_binary_masks(input_folder, output_folder):
                     mask_filename = os.path.splitext(filename)[0] + ".png"
                     output_path = os.path.join(output_folder, mask_filename)
                     cv2.imwrite(output_path, closed_mask)
-                    print(f"Processed '{filename}' and saved mask to '{mask_filename}'")
+                    logger.info(f"Processed '{filename}' and saved mask to '{mask_filename}'")
 
-            print("\nAll images processed successfully.")
+            logger.info("\nAll images processed successfully.")
 
 
 # Function to calculate maximum length of binary mask to extract top-view image
@@ -289,7 +292,7 @@ def calculate_maximum_length(image):
     contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
-        print("No white object contours found in the mask.")
+        logger.info("No white object contours found in the mask.")
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), 0.0
 
     # 1. Find the largest contour
@@ -334,7 +337,7 @@ def extract_top_view_image(input_folder):
     image_paths = [i for i in image_paths if i.split(".")[-1] != "jpg"]
     
     if not image_paths:
-        print(f"Error: No images found in the directory: {input_folder}")
+        logger.info(f"Error: No images found in the directory: {input_folder}")
         exit()
     
     all_lengths = []
@@ -369,11 +372,11 @@ def extract_top_view_image(input_folder):
     if longest_mask_path and longest_length > 0:
         global_filename = os.path.basename(longest_mask_path)
         global_filename = global_filename.replace(".jpg", ".png")
-        print(f"global_filename: {global_filename}")
+        logger.info(f"global_filename: {global_filename}")
         
         return global_filename
     else:
-        print(f"Could not find a valid frame with length data in the first {SAMPLE_SIZE} frames.")
+        logger.info(f"Could not find a valid frame with length data in the first {SAMPLE_SIZE} frames.")
 
 
 # Function to extract index of side-view image filename
@@ -395,7 +398,7 @@ def extract_side_image(global_filename):
     # Extract front view image frame index
     side_view_image_index = top_view_image_index + 45
     side_view_image = "frame_00" + str(side_view_image_index) + ".png"
-    print(f"side view image filename: {side_view_image}") 
+    logger.info(f"side view image filename: {side_view_image}") 
 
     return side_view_image
 
@@ -429,7 +432,7 @@ def calculate_max_dimensions_combined(image):
     conversion_factor = 0.00274 * 2
 
     if not contours:
-        print("No black object contours found in the mask.")
+        logger.info("No black object contours found in the mask.")
         return maximum_width, maximum_length
 
     largest_contour = max(contours, key=cv2.contourArea)
@@ -458,8 +461,8 @@ def calculate_max_dimensions_combined(image):
     length = round(length, 2)
     width = round(width, 2)
 
-    print(f"Length: {length} mm")
-    print(f"Width: {width} mm")
+    logger.info(f"Length: {length} mm")
+    logger.info(f"Width: {width} mm")
 
     return float(length), float(width)
 
@@ -479,7 +482,7 @@ def extract_min_bounding_box(global_filename):
     image_path = "/temp/" + global_filename 
     image = cv2.imread(image_path)
     if image is None:
-        print(f"Error: Could not load image from {image_path}")
+        logger.info(f"Error: Could not load image from {image_path}")
         return None, None, None, None
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -492,12 +495,12 @@ def extract_min_bounding_box(global_filename):
         box_points = np.intp(box_points)
         
         (x, y), (width, height), angle = min_area_rect
-        print(f"Processing {os.path.basename(image_path)}:")
-        print(f"   Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
+        logger.info(f"Processing {os.path.basename(image_path)}:")
+        logger.info(f"   Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
 
         return image, width, height, angle
     else:
-        print(f"No contours found in {os.path.basename(image_path)}")
+        logger.info(f"No contours found in {os.path.basename(image_path)}")
         return None, None, None, None
 
 
@@ -552,13 +555,13 @@ def correct_perspective_horizontal(image, A, B):
     """
     # Ensure image is not None/empty
     if image is None:
-        print("Error: Input image is None.")
+        logger.info("Error: Input image is None.")
         return None
 
     # 1. Calculate the angle of the line connecting A and B
     angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
     angle_deg = np.degrees(angle_rad)
-    print(f"Calculated Angle (degrees): {angle_deg:.2f}")
+    logger.info(f"Calculated Angle (degrees): {angle_deg:.2f}")
     rotation_angle = angle_deg
 
     # 2. Define the center of rotation
@@ -609,15 +612,15 @@ def horizontal_iterative_correction(global_filename):
     # Variables to store the last stable (non-divergent) result
     best_stable_mask = binary_mask.copy()
     best_stable_angle = 0.0
-    print(f"Starting Iterative Horizontal Perspective Correction (Tolerance: {CONVERGENCE_TOLERANCE} deg)...")
+    logger.info(f"Starting Iterative Horizontal Perspective Correction (Tolerance: {CONVERGENCE_TOLERANCE} deg)...")
     
     # Get the initial drawn mask for plotting "Before Convergence"
     _, A, B = calculate_maximum_length(binary_mask)
     
     while iteration < MAX_ITERATIONS:
         if abs(rotation_angle) <= CONVERGENCE_TOLERANCE and iteration > 0:
-            print(f"\n--- SUCCESS: CONVERGED ---")
-            print(f"Final Angle: {rotation_angle:.4f}° at Iteration {iteration}.")
+            logger.info(f"\n--- SUCCESS: CONVERGED ---")
+            logger.info(f"Final Angle: {rotation_angle:.4f}° at Iteration {iteration}.")
             break
             
         # A. Find the new extreme points (A and B) on the current mask
@@ -629,9 +632,9 @@ def horizontal_iterative_correction(global_filename):
         # --- DIVERGENCE CHECK (After 1st iteration) ---
         if iteration > 0:
             if abs(rotation_angle) > abs(previous_required_angle) + DIVERGENCE_THRESHOLD:
-                print(f"\n--- WARNING: DIVERGENCE DETECTED ---")
-                print(f"Current angle ({rotation_angle:.4f}°) is > Previous angle ({previous_required_angle:.4f}°).")
-                print(f"Stopping and reverting to last stable result (Iteration {iteration - 1}).")
+                logger.info(f"\n--- WARNING: DIVERGENCE DETECTED ---")
+                logger.info(f"Current angle ({rotation_angle:.4f}°) is > Previous angle ({previous_required_angle:.4f}°).")
+                logger.info(f"Stopping and reverting to last stable result (Iteration {iteration - 1}).")
                 
                 # Revert mask and angle to the last stable state
                 binary_mask = best_stable_mask
@@ -642,17 +645,17 @@ def horizontal_iterative_correction(global_filename):
         best_stable_mask = binary_mask.copy()
         best_stable_angle = rotation_angle
         previous_required_angle = rotation_angle 
-        print(f"Iteration {iteration + 1}: Required Correction: {rotation_angle:.4f} deg")
+        logger.info(f"Iteration {iteration + 1}: Required Correction: {rotation_angle:.4f} deg")
 
         if binary_mask is None:
-            print("Error during rotation. Stopping loop.")
+            logger.info("Error during rotation. Stopping loop.")
             break
             
         iteration += 1
     
     else: 
-        print(f"\n--- WARNING: MAX ITERATIONS REACHED ---")
-        print(f"Final Angle: {rotation_angle:.4f} deg (Reverting to best stable result if not converged).")
+        logger.info(f"\n--- WARNING: MAX ITERATIONS REACHED ---")
+        logger.info(f"Final Angle: {rotation_angle:.4f} deg (Reverting to best stable result if not converged).")
         binary_mask = best_stable_mask
         rotation_angle = best_stable_angle
 
@@ -713,7 +716,7 @@ def vertical_iterative_correction(original_mask):
     rotation_angle = tolerance + 1.0 # Initialize above tolerance to start the loop
     iteration = 0
     
-    print(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{tolerance} deg)...")
+    logger.info(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{tolerance} deg)...")
     
     while abs(rotation_angle) > tolerance and iteration < max_iterations:
         # A. Find the new extreme points (A and B) on the current mask
@@ -722,10 +725,10 @@ def vertical_iterative_correction(original_mask):
         # B. Calculate the rotation needed and apply it
         current_mask, rotation_angle = correct_perspective_vertical(current_mask, A, B, center)
         
-        print(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
+        logger.info(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
 
         if current_mask is None:
-            print("Error during rotation. Stopping loop.")
+            logger.info("Error during rotation. Stopping loop.")
             break
             
         iteration += 1
@@ -752,7 +755,7 @@ def calculate_extent(global_filename):
 
     # Check if any contours were found
     if not contours:
-        print("No contours found.")
+        logger.info("No contours found.")
         return None
 
     # Select the largest contour (assumes the shape is the main object)
@@ -794,7 +797,7 @@ def correct_perspective_min_bounding_box_side_view(image, width_rect, height_rec
         rotation_angle = angle_deg
     else:
         rotation_angle = angle_deg + 90
-    print(f"   Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
+    logger.info(f"   Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
 
     # Define the center of rotation and dimensions
     (h, w) = image.shape[:2]
@@ -833,7 +836,7 @@ def calculate_maximum_height(image):
     contours, _ = cv2.findContours(contour_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     if not contours:
-        print("No black object contours found in the mask.")
+        logger.info("No black object contours found in the mask.")
         return maximum_height
 
     # 1. Find the largest contour
@@ -849,7 +852,7 @@ def calculate_maximum_height(image):
     maximum_height = extreme_bottom_y - extreme_top_y
     height = maximum_height * conversion_factor
     height = round(height, 2)
-    print(f"Thickness: {height} mm")
+    logger.info(f"Thickness: {height} mm")
 
     return float(height)
 
