@@ -92,7 +92,6 @@ def morphological_gradient_detection(image):
     Returns:
         image: The processed image.
     """
-
     # 1. Blur slightly to reduce camera noise, but keep structure
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
 
@@ -296,10 +295,6 @@ def extract_top_view_image(input_folder):
     image_paths.sort()
     image_paths = [i for i in image_paths if i.split(".")[-1] != "jpg"]
     
-    if not image_paths:
-        logger.info(f"Error: No images found in the directory: {input_folder}")
-        exit()
-    
     all_lengths = []
     processed_count = 0
     
@@ -320,10 +315,6 @@ def extract_top_view_image(input_folder):
     
     for path in paths_to_analyze:
         mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        
-        if mask is None:
-            continue
-            
         length, _, _ = calculate_maximum_length(mask) 
         if length > longest_length:
             longest_length = length
@@ -334,9 +325,7 @@ def extract_top_view_image(input_folder):
         logger.info(f"global_filename: {global_filename}")
         
         return global_filename
-    else:
-        logger.info(f"Could not find a valid frame with length data in the first {SAMPLE_SIZE} frames.")
-
+    
 
 # Function to extract index of side-view image filename
 def extract_side_image(global_filename):
@@ -373,7 +362,11 @@ def calculate_max_dimensions_combined(image):
     Returns:
         tuple: A tuple containing the length and width the top-view image.
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_width = 0.0
     maximum_length = 0.0
@@ -462,21 +455,14 @@ def correct_perspective_min_bounding_box_top_view(image, angle_deg, center=None)
     else:
         rotation_angle = angle_deg
 
-    # 2. Define the center of rotation
-    if center is None:
-        (h, w) = image.shape[:2] if len(image.shape) == 3 else image.shape
-        center = (w // 2, h // 2)
-
-    # 3. Create and apply the rotation matrix
-    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
-    (h, w) = image.shape[:2] if len(image.shape) == 3 else image.shape 
-    rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+     # 2. Apply rotation matrix
+    rotated_image, rotation_angle = apply_warp_affine(image, rotation_angle, center)
 
     return rotated_image, rotation_angle
 
 
 # Helper function to apply iterative horizontal perspective correction
-def correct_horizontal_perspective(image, A, B):
+def correct_horizontal_perspective(image, A, B, center=None):
     """
     Calculates the rotation angle needed to make the line connecting A and B horizontal,
     and then applies that rotation to the image.
@@ -497,19 +483,8 @@ def correct_horizontal_perspective(image, A, B):
     # 2. Select horizontal/vertical line perspective correction
     rotation_angle = angle_deg
 
-    # 3. Define the center of rotation
-    if len(image.shape) == 3:
-        (h, w) = image.shape[:2]
-    else:
-        (h, w) = image.shape
-    
-    center = (w // 2, h // 2)
-
-    # 4. Create the rotation matrix
-    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
-
-    # 5. Apply the rotation to the image
-    rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    # 3. Apply rotation matrix
+    rotated_image, rotation_angle = apply_warp_affine(image, rotation_angle, center)
 
     return rotated_image, rotation_angle
 
@@ -586,13 +561,19 @@ def horizontal_iterative_correction(global_filename):
     return binary_mask
 
 
-def determine_line_perspective_correction(shape):
-    if shape in ["Oval", "Round", "Pear", "Other", "Marquise", "Fancy"]:
-        reference = "Horizontal"
-    elif shape in ["Heart", "Triangular / Trilliant", "Triangular Cushion"]:
-        reference = "Vertical"
+# Helper function to apply warp affine to correct image perspective
+def apply_warp_affine(image, rotation_angle, center):
+    # 1. Define the center of rotation
+    if center is None:
+        (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
+        center = (w // 2, h // 2)
 
-    return reference
+    # 2. Create and apply the rotation matrix
+    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+    (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
+    rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+    return rotated_image, rotation_angle
 
 
 # Helper function to apply iterative vertical perspective correction
@@ -609,17 +590,10 @@ def correct_vertical_perspective(image, A, B, center=None):
     # Target angle for the line is 90 degrees (downwards on the image plane)
     rotation_angle = angle_deg - 90.0
 
-    # 2. Define the center of rotation
-    if center is None:
-        (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
-        center = (w // 2, h // 2)
+    # 2. Apply rotation matrix
+    rotated_image, rotation_angle = apply_warp_affine(image, rotation_angle, center)
 
-    # 3. Create and apply the rotation matrix
-    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
-    (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
-    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-
-    return rotated, rotation_angle
+    return rotated_image, rotation_angle
 
 
 # Function to apply iterative vertical perspective correction
@@ -698,18 +672,11 @@ def correct_perspective_min_bounding_box_side_view(image, width_rect, height_rec
         rotation_angle = angle_deg + 90
     logger.info(f"Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
 
-    # Define the center of rotation and dimensions
-    (h, w) = image.shape[:2]
-    if center is None:
-        center = (w // 2, h // 2)
+    # Apply the rotation matrix
+    rotated_image, _ = apply_warp_affine(image, rotation_angle, center)
 
-    # Create the rotation matrix
-    M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+    return rotated_image
 
-    # Apply the rotation
-    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-
-    return rotated
 
 # Function to calculate maximum height from side-view image
 def calculate_maximum_height(image):
@@ -741,6 +708,7 @@ def calculate_maximum_height(image):
     logger.info(f"Thickness: {height} mm")
 
     return height
+
 
 # Function to process dimensions
 def process_dimensions(video_path, input_folder, output_folder, shape):
