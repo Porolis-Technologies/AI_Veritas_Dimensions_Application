@@ -333,7 +333,6 @@ def extract_top_view_image(input_folder):
 
     if longest_mask_path and longest_length > 0:
         global_filename = os.path.basename(longest_mask_path)
-        global_filename = global_filename.replace(".jpg", ".png")
         logger.info(f"global_filename: {global_filename}")
         
         return global_filename
@@ -411,7 +410,7 @@ def calculate_max_dimensions_combined(image):
     logger.info(f"Length: {length} mm")
     logger.info(f"Width: {width} mm")
 
-    return float(length), float(width)
+    return length, width
 
 
 # Helper function to apply perspective correction for rectangular shapes
@@ -428,10 +427,6 @@ def extract_min_bounding_box(global_filename):
     """
     image_path = "/temp/" + global_filename 
     image = cv2.imread(image_path)
-    if image is None:
-        logger.info(f"Error: Could not load image from {image_path}")
-        return None, None, None, None
-
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -443,12 +438,9 @@ def extract_min_bounding_box(global_filename):
         
         (x, y), (width, height), angle = min_area_rect
         logger.info(f"Processing {os.path.basename(image_path)}:")
-        logger.info(f"   Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
+        logger.info(f"Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
 
         return image, width, height, angle
-    else:
-        logger.info(f"No contours found in {os.path.basename(image_path)}")
-        return None, None, None, None
 
 
 # Helper function to apply perspective correction for rectangular shapes
@@ -500,11 +492,6 @@ def correct_perspective_horizontal(image, A, B):
     Returns:
         tuple: The tuple containing the corrected (rotated) image and angle of rotation.
     """
-    # Ensure image is not None/empty
-    if image is None:
-        logger.info("Error: Input image is None.")
-        return None
-
     # 1. Calculate the angle of the line connecting A and B
     angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
     angle_deg = np.degrees(angle_rad)
@@ -593,11 +580,6 @@ def horizontal_iterative_correction(global_filename):
         best_stable_angle = rotation_angle
         previous_required_angle = rotation_angle 
         logger.info(f"Iteration {iteration + 1}: Required Correction: {rotation_angle:.4f} deg")
-
-        if binary_mask is None:
-            logger.info("Error during rotation. Stopping loop.")
-            break
-            
         iteration += 1
     
     else: 
@@ -671,13 +653,7 @@ def vertical_iterative_correction(original_mask):
         
         # B. Calculate the rotation needed and apply it
         current_mask, rotation_angle = correct_perspective_vertical(current_mask, A, B, center)
-        
         logger.info(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
-
-        if current_mask is None:
-            logger.info("Error during rotation. Stopping loop.")
-            break
-            
         iteration += 1
 
     return current_mask, rotation_angle
@@ -687,23 +663,10 @@ def vertical_iterative_correction(original_mask):
 def calculate_extent(global_filename):
     image_path = "/temp/" + global_filename 
     image = cv2.imread(image_path)
-
-    if len(image.shape) == 3:
-        # Convert BGR (3-channel) to Grayscale (1-channel)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
-    else:
-        # Assume it's already Grayscale (1-channel)
-        gray = image
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
 
     # Find contours in the grayscale image
-    # RETR_EXTERNAL retrieves only the outer contours
-    # CHAIN_APPROX_SIMPLE compresses horizontal, vertical, and diagonal segments
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Check if any contours were found
-    if not contours:
-        logger.info("No contours found.")
-        return None
 
     # Select the largest contour (assumes the shape is the main object)
     # This converts the list of contours into a single contour array 'c'
@@ -736,15 +699,12 @@ def correct_perspective_min_bounding_box_side_view(image, width_rect, height_rec
 
     Returns: 
         rotated_image (np.ndarray): The perspective-corrected image.
-    """
-    if image is None:
-        return None
-    
+    """    
     if width_rect >= height_rect:
         rotation_angle = angle_deg
     else:
         rotation_angle = angle_deg + 90
-    logger.info(f"   Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
+    logger.info(f"Perspective Correction Angle Applied: {rotation_angle:.2f} degrees")
 
     # Define the center of rotation and dimensions
     (h, w) = image.shape[:2]
@@ -772,19 +732,7 @@ def calculate_maximum_height(image):
     """
     maximum_height = 0.0
     conversion_factor = 0.00274 * 2
-    
-    if len(image.shape) == 3:
-        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        _, binary_mask = cv2.threshold(gray_image, 1, 255, cv2.THRESH_BINARY)
-        contour_image = binary_mask
-    else:
-        contour_image = image
-
-    contours, _ = cv2.findContours(contour_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        logger.info("No black object contours found in the mask.")
-        return maximum_height
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # 1. Find the largest contour
     largest_contour = max(contours, key=cv2.contourArea)
@@ -801,7 +749,7 @@ def calculate_maximum_height(image):
     height = round(height, 2)
     logger.info(f"Thickness: {height} mm")
 
-    return float(height)
+    return height
 
 # Function to process dimensions
 def process_dimensions(video_path, input_folder, output_folder, shape):
