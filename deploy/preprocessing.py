@@ -18,67 +18,41 @@ THRESHOLD = 0.78                    # Extent threshold for rule-based perspectiv
 
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
-    """
-    Extract 20 frames (first and last 5, and frame 40 to 49) from the input video and output to a destination folder.
-
-    Args:
-        video_path: Path of input videos.
-        output_folder: Path of output folder.
-
-    Returns:
-        None
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        logger.error(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
+        logger.error(f"Could not open video: {video_path}")
+        return
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    logger.info(f"Processing video: {os.path.basename(video_path)} | Total Frames: {total_frames}")
+    
+    # 1. Define target ranges
+    # First 5, Middle (40-49), and Last 5
+    indices = set()
+    indices.update(range(0, 5))
+    indices.update(range(40, 50))
+    indices.update(range(max(0, total_frames - 5), total_frames))
 
-    # --- 1. Calculate Target Frame Indices ---
-    if total_frames > TARGET_FRAMES_PER_END:
-        first_frames = list(range(TARGET_FRAMES_PER_END))
-    else:
-        first_frames = list(range(total_frames)) 
-    
-    if total_frames > END_FRAME_INDEX:
-        fixed_frames = list(range(START_FRAME_INDEX, END_FRAME_INDEX + 1))
-    elif total_frames > START_FRAME_INDEX:
-        fixed_frames = list(range(START_FRAME_INDEX, total_frames))
-        logger.info(f"Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
-    else:
-        fixed_frames = []
-        logger.info(f"Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
-        
-    last_frames = []
-    if total_frames > 0:
-        last_frames_start_index = max(0, total_frames - TARGET_FRAMES_PER_END)
-        last_frames = list(range(last_frames_start_index, total_frames))
-    
-    combined_indices = sorted(list(set(
-        first_frames + fixed_frames + last_frames
-    )))
-    
-    frame_indices = [idx for idx in combined_indices if idx < total_frames]
-    logger.info(f"Total frames to attempt extraction: {len(frame_indices)}")
-    
-    # --- 2. Extract and Process Frames ---
-    frames_saved_count = 0
-    
-    for frame_index in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        
-        ret, frame = cap.read()
-        if not ret:
-            logger.info(f"Error: Failed to read frame {frame_index}. Skipping.")
-            continue
+    # 2. Filter to ensure indices exist within the actual video length
+    # Sorted ensures we read the video chronologically (faster for some codecs)
+    frame_indices = sorted([i for i in indices if 0 <= i < total_frames])
 
-        frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
-        cv2.imwrite(frame_filename, frame)
-        frames_saved_count += 1
+    logger.info(f"Extracting {len(frame_indices)} frames from {os.path.basename(video_path)}")
+
+    # 3. Extract and Save
+    saved_count = 0
+    for idx in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        success, frame = cap.read()
+        
+        if success:
+            out_path = os.path.join(output_folder, f"frame_{idx:04d}.jpg")
+            cv2.imwrite(out_path, frame)
+            saved_count += 1
+        else:
+            logger.warning(f"Failed to read frame {idx}")
 
     cap.release()
-    logger.info(f" Completed: {frames_saved_count} frames saved.")
+    logger.info(f"Done. Saved {saved_count} frames.")
 
 
 # Helper function to extract binary mask
@@ -139,19 +113,15 @@ def apply_convex_hull(image):
     image_area = h * w
     final_mask = np.zeros((h, w), dtype=np.uint8)
 
-    # 2. AUTO-DETECT BACKGROUND COLOR
+    # 2. Auto-detect background colour 
     corners = [binary[0,0], binary[0, w-1], binary[h-1, 0], binary[h-1, w-1]]
     avg_corner = sum(corners) / 4
 
     if avg_corner > 127:
         binary = cv2.bitwise_not(binary)
 
-    # 3. Find Contours (Use RETR_EXTERNAL to ignore internal holes/noise)
+    # 3. Find Contours
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
-        logger.info("-> No contours found. Returning empty black mask.")
-        return final_mask
 
     # 4. Filter Contours
     valid_contours = []
@@ -163,23 +133,10 @@ def apply_convex_hull(image):
             continue
         
         # IGNORE FRAME: Only ignore if it is literally the border of the image
-        # (Increased threshold from 0.95 to 0.99 to allow large gems)
         if area > 0.99 * image_area:
             continue
             
         valid_contours.append(cnt)
-
-    if not valid_contours:
-        if contours:
-            largest_raw = max(contours, key=cv2.contourArea)
-            _, _, cw, ch = cv2.boundingRect(largest_raw)
-            if cw < w or ch < h: 
-                valid_contours.append(largest_raw)
-            else:
-                logger.info("-> Only found image frame/border. Returning empty mask.")
-                return final_mask
-        else:
-            return final_mask
 
     # 5. Find the largest remaining contour (The Gemstone)
     largest_contour = max(valid_contours, key=cv2.contourArea)
@@ -207,35 +164,27 @@ def extract_binary_masks(input_folder, output_folder):
     Returns:
         None
     """
-    image_extensions = ('.jpg')
     image_files = os.listdir(input_folder)
     image_files = [i for i in image_files if i.lower().endswith('.jpg')]
     image_files.sort()
 
-    if not image_files:
-        logger.info(f"No images found in the directory: {input_folder}")
-    else:
-        for filename in image_files:
-            if filename.lower().endswith(image_extensions):
-                input_path = os.path.join(input_folder, filename)
-                image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-                
-                if image is None:
-                    logger.info(f"Warning: Could not read image {filename}. Skipping.")
-                    continue
-                
-                # 1. Apply morphological gradient detection
-                processed_mask = morphological_gradient_detection(image)
+    for filename in image_files:
+        if filename.lower().endswith('.jpg'):
+            input_path = os.path.join(input_folder, filename)
+            image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+            
+            # 1. Apply morphological gradient detection
+            processed_mask = morphological_gradient_detection(image)
 
-                # 2. Apply convex hull
-                closed_mask = apply_convex_hull(processed_mask)
+            # 2. Apply convex hull
+            closed_mask = apply_convex_hull(processed_mask)
 
-                mask_filename = os.path.splitext(filename)[0] + ".png"
-                output_path = os.path.join(output_folder, mask_filename)
-                cv2.imwrite(output_path, closed_mask)
-                logger.info(f"Processed '{filename}' and saved mask to '{mask_filename}'")
+            mask_filename = os.path.splitext(filename)[0] + ".png"
+            output_path = os.path.join(output_folder, mask_filename)
+            cv2.imwrite(output_path, closed_mask)
+            logger.info(f"Processed '{filename}' and saved mask to '{mask_filename}'")
 
-        logger.info("\nAll images processed successfully.")
+    logger.info("\nAll images processed successfully.")
 
 
 # Function to calculate maximum length of binary mask to extract top-view image
@@ -250,13 +199,8 @@ def calculate_maximum_length(image):
         tuple: A tuple containing the maximum length, start and end point of the maximum length
 
     """
-    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        logger.info("No white object contours found in the mask.")
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR), 0.0
-
     # 1. Find the largest contour
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     largest_contour = max(contours, key=cv2.contourArea)
 
     # 2. Extract all coordinates (x, y) from the largest contour
@@ -273,7 +217,7 @@ def calculate_maximum_length(image):
     start_point_hypotenuse = tuple(left_points[-1])
     end_point_hypotenuse = tuple(right_points[0])
 
-    return float(maximum_length), start_point_hypotenuse, end_point_hypotenuse
+    return maximum_length, start_point_hypotenuse, end_point_hypotenuse
 
 
 # Function to extract index of top-view image filename
@@ -445,9 +389,6 @@ def correct_perspective_min_bounding_box_top_view(image, angle_deg, center=None)
     Returns:
         tuple: A tuple containing the rotated image and angle of rotation.
     """
-    if image is None:
-        return None
-
     # 1. Calculate the rotation angle (Using the logic provided by the user)
     rotation_angle = 0
     if angle_deg > 10:
@@ -521,7 +462,7 @@ def horizontal_iterative_correction(global_filename):
     # Get the initial drawn mask for plotting "Before Convergence"
     _, A, B = calculate_maximum_length(binary_mask)
     
-    while iteration < MAX_ITERATIONS:
+    while abs(rotation_angle) > CONVERGENCE_TOLERANCE and iteration < MAX_ITERATIONS:
         if abs(rotation_angle) <= CONVERGENCE_TOLERANCE and iteration > 0:
             logger.info(f"\n--- SUCCESS: CONVERGED ---")
             logger.info(f"Final Angle: {rotation_angle:.4f}° at Iteration {iteration}.")
