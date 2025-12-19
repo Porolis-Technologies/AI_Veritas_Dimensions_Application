@@ -15,9 +15,6 @@ CONVERGENCE_TOLERANCE = 0.5         # Convergence threshold in Degrees
 MAX_ITERATIONS = 10                 # Maximum number of iterations for line perspective correction
 DIVERGENCE_THRESHOLD = 0.1          # Stop if correction angle increases by more than this (e.g., 0.1 deg)
 THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
-TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
-START_FRAME_INDEX = 40              # Start of the fixed middle range
-END_FRAME_INDEX = 49                # End of the fixed middle range
 
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
@@ -34,23 +31,16 @@ def extract_20_frames(video_path, output_folder):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logger.error(f"Could not open video: {video_path}")
-        return
-
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # 1. Define target ranges
-    # First 5, Middle (40-49), and Last 5
+    # 1. Define target ranges (First 5, Middle (40-49), and Last 5)
     indices = set()
     indices.update(range(0, 5))
     indices.update(range(40, 50))
     indices.update(range(max(0, total_frames - 5), total_frames))
 
     # 2. Filter to ensure indices exist within the actual video length
-    # Sorted ensures we read the video chronologically (faster for some codecs)
     frame_indices = sorted([i for i in indices if 0 <= i < total_frames])
-
     logger.info(f"Extracting {len(frame_indices)} frames from {os.path.basename(video_path)}")
 
     # 3. Extract and Save
@@ -97,13 +87,10 @@ def morphological_gradient_detection(image):
 
     # 5. Find the Largest Contour to remove noise
     contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
     final_mask = np.zeros_like(image)
     
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
-        
-        # Fill the largest contour (The Gem)
         cv2.drawContours(final_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
 
     return final_mask
@@ -120,7 +107,6 @@ def apply_convex_hull(image):
 
     Returns:
         image: The processed image.
-
     """
     # 1. Ensure binary
     _, binary = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
@@ -212,7 +198,6 @@ def calculate_maximum_length(image):
 
     Returns:
         tuple: A tuple containing the maximum length, start and end point of the maximum length
-
     """
     # 1. Find the largest contour
     contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -256,7 +241,6 @@ def extract_top_view_image(input_folder):
     paths_to_analyze = list(set(
         all_image_paths[:SAMPLE_SIZE] + all_image_paths[-SAMPLE_SIZE:]
     ))
-
     longest_length = -1.0
     longest_mask_path = None 
 
@@ -352,8 +336,7 @@ def extract_min_bounding_box(longest_mask_path):
         global filename: The filename of the top-view image which is rectangular.
 
     Returns:
-        tuple: A tuple containing the image, width, height and angle of rotation or 
-               (None, None, None, None) if no image was found.
+        tuple: A tuple containing the image, width, height and angle of rotation.
     """
     image = cv2.imread(longest_mask_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -380,6 +363,7 @@ def correct_perspective_min_bounding_box_top_view(image, angle_deg, center=None)
     Args:
         image: The top-view image which is rectangular.
         angle_deg: The angle of rotation from the minimum area bounding box.
+        center (tuple): Center of rotation (default is image center).
 
     Returns:
         tuple: A tuple containing the rotated image and angle of rotation.
@@ -407,6 +391,7 @@ def correct_horizontal_perspective(image, A, B, center=None):
         image (np.array): The input image.
         A (tuple): (x, y) coordinates of point A.
         B (tuple): (x, y) coordinates of point B.
+        center (tuple): Center of rotation (default is image center).
 
     Returns:
         tuple: The tuple containing the corrected (rotated) image and angle of rotation.
@@ -443,7 +428,6 @@ def iterative_correction(image_path, calculate_maximum_dimensions, correct_persp
     
     # Calculate the exact angle required for the initial rotation
     initial_correction_angle = np.degrees(np.arctan2(B[1] - A[1], B[0] - A[0]))
-    
     rotation_angle = initial_correction_angle # Start with the initial angle
     previous_required_angle = initial_correction_angle * 10 # Initialize high to pass the first check
     iteration = 0
@@ -497,7 +481,17 @@ def iterative_correction(image_path, calculate_maximum_dimensions, correct_persp
 
 
 # Helper function to apply warp affine to correct image perspective
-def apply_warp_affine(image, rotation_angle, center):
+def apply_warp_affine(image, rotation_angle, center=None):
+    """
+    Applies the rotation matrix to image.
+
+    Args:
+        image (np.array): The input image.
+        rotation_angle: Required rotation angle.
+        center (tuple): Center of rotation (default is image center).
+
+    Returns: rotated_image, required_rotation_angle
+    """    
     # 1. Define the center of rotation
     if center is None:
         (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
@@ -515,7 +509,13 @@ def apply_warp_affine(image, rotation_angle, center):
 def correct_vertical_perspective(image, A, B, center=None):
     """
     Calculates and applies the rotation needed to make the line connecting A and B vertical.
-    
+
+    Args:
+        image (np.array): The input image.
+        A (tuple): (x, y) coordinates of point A.
+        B (tuple): (x, y) coordinates of point B.
+        center (tuple): Center of rotation (default is image center).
+
     Returns: rotated_image, required_rotation_angle
     """    
     # 1. Calculate the angle of the line A->B (Theta)
@@ -533,6 +533,14 @@ def correct_vertical_perspective(image, A, B, center=None):
 
 # Function to determine criteria for rule-based perspective for side-view image
 def calculate_extent(side_view_image_path):
+    """
+    Calculates extent of side view image.
+
+    Args:
+        image (np.array): The input image path.
+
+    Returns: extent
+    """    
     image = cv2.imread(side_view_image_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
 
