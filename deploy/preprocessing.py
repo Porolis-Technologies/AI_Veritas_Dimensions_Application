@@ -592,15 +592,12 @@ def horizontal_iterative_correction(global_filename):
 
 
 # Helper function to apply iterative vertical perspective correction
-def correct_perspective_vertical(image, A, B, center=None):
+def correct_vertical_perspective(image, A, B, center=None):
     """
     Calculates and applies the rotation needed to make the line connecting A and B vertical.
     
     Returns: rotated_image, required_rotation_angle
-    """
-    if image is None:
-        return None, 0.0
-    
+    """    
     # 1. Calculate the angle of the line A->B (Theta)
     angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
     angle_deg = np.degrees(angle_rad)
@@ -616,14 +613,7 @@ def correct_perspective_vertical(image, A, B, center=None):
     # 3. Create and apply the rotation matrix
     M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
     (h, w) = image.shape[:2] if len(image.shape) > 1 else image.shape
-    rotated = cv2.warpAffine(
-        image, 
-        M, 
-        (w, h), 
-        flags=cv2.INTER_CUBIC, 
-        borderMode=cv2.BORDER_CONSTANT, 
-        borderValue=0
-    )
+    rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
     return rotated, rotation_angle
 
@@ -652,7 +642,7 @@ def vertical_iterative_correction(original_mask):
         _, _, A, B = calculate_maximum_height(current_mask)
         
         # B. Calculate the rotation needed and apply it
-        current_mask, rotation_angle = correct_perspective_vertical(current_mask, A, B, center)
+        current_mask, rotation_angle = correct_vertical_perspective(current_mask, A, B, center)
         logger.info(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
         iteration += 1
 
@@ -775,12 +765,12 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     top_global_filename = extract_top_view_image(input_folder)
     
     # 4. Apply minimum bounding box perspective correction for rectangular shapes
-    if shape == "Radiant" or shape == "Emerald" or shape == "Cushion" or shape == "Rectangular Cushion" or shape == "Rectangular" or shape == "Square Cushion" or shape == "Square":
+    if shape in ["Radiant", "Emerald", "Cushion", "Rectangular Cushion", "Rectangular", "Square Cushion", "Square"]:
         image, _, _, angle = extract_min_bounding_box(top_global_filename)
         corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
     # 5. Apply iterative horizontal perspective correcion for round shape
-    elif shape == "Oval" or shape == "Round" or shape == "Pear" or shape == "Other" or shape == "Marquise":
+    elif shape in ["Oval", "Round", "Pear", "Other", "Marquise"]:
         corrected_image = horizontal_iterative_correction(top_global_filename)
 
     # 6. Apply iterative vertical perspective correction for heart or triangular shapes
