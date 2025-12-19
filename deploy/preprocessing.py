@@ -3,9 +3,17 @@ import os
 import numpy as np
 import glob 
 from deploy.config import get_logger
-
 logger = get_logger(__name__)
 
+# Hyperparameters
+TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
+START_FRAME_INDEX = 40              # Start of the fixed middle range
+END_FRAME_INDEX = 49                # End of the fixed middle range
+SAMPLE_SIZE = 5                     # Sample size for total frames extraction
+CONVERSION_FACTOR = 0.00274 * 2     # Conversion factor to convert pixels to mm
+CONVERGENCE_TOLERANCE = 0.5         # Convergence threshold in Degrees
+MAX_ITERATIONS = 10                 # Maximum number of iterations for line perspective correction
+DIVERGENCE_THRESHOLD = 0.1          # Stop if correction angle increases by more than this (e.g., 0.1 deg)
 THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
 
 # Function to extract 20 video frames
@@ -20,13 +28,6 @@ def extract_20_frames(video_path, output_folder):
     Returns:
         None
     """
-    TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
-    START_FRAME_INDEX = 40              # Start of the fixed middle range
-    END_FRAME_INDEX = 49                # End of the fixed middle range
-
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         logger.error(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
@@ -172,7 +173,7 @@ def apply_convex_hull(image):
     if not valid_contours:
         if contours:
             largest_raw = max(contours, key=cv2.contourArea)
-            x, y, cw, ch = cv2.boundingRect(largest_raw)
+            _, _, cw, ch = cv2.boundingRect(largest_raw)
             if cw < w or ch < h: 
                 valid_contours.append(largest_raw)
             else:
@@ -207,7 +208,6 @@ def extract_binary_masks(input_folder, output_folder):
     Returns:
         None
     """
-
     image_extensions = ('.jpg')
     image_files = os.listdir(input_folder)
     image_files = [i for i in image_files if i.lower().endswith('.jpg')]
@@ -289,8 +289,6 @@ def extract_top_view_image(input_folder):
         string: A string containing the path of the top-view image filename.
     """
     image_extensions = ('*.png', '*.jpg', '*.jpeg')
-    SAMPLE_SIZE = 5 
-    
     image_paths = []
     for ext in image_extensions:
         image_paths.extend(glob.glob(os.path.join(input_folder, ext)))
@@ -379,7 +377,6 @@ def calculate_max_dimensions_combined(image):
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_width = 0.0
     maximum_length = 0.0
-    conversion_factor = 0.00274 * 2
 
     if not contours:
         logger.info("No black object contours found in the mask.")
@@ -399,11 +396,11 @@ def calculate_max_dimensions_combined(image):
     maximum_length = extreme_right_x - extreme_left_x
 
     if maximum_length > maximum_width:
-        length = maximum_length * conversion_factor
-        width = maximum_width * conversion_factor
+        length = maximum_length * CONVERSION_FACTOR
+        width = maximum_width * CONVERSION_FACTOR
     else:
-        length = maximum_width * conversion_factor
-        width = maximum_length * conversion_factor
+        length = maximum_width * CONVERSION_FACTOR
+        width = maximum_length * CONVERSION_FACTOR
 
     length = round(length, 2)
     width = round(width, 2)
@@ -436,7 +433,7 @@ def extract_min_bounding_box(global_filename):
         box_points = cv2.boxPoints(min_area_rect)
         box_points = np.intp(box_points)
         
-        (x, y), (width, height), angle = min_area_rect
+        (_, _), (width, height), angle = min_area_rect
         logger.info(f"Processing {os.path.basename(image_path)}:")
         logger.info(f"Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
 
@@ -479,7 +476,7 @@ def correct_perspective_min_bounding_box_top_view(image, angle_deg, center=None)
 
 
 # Helper function to apply iterative horizontal perspective correction
-def correct_perspective_horizontal(image, A, B):
+def correct_horizontal_perspective(image, A, B):
     """
     Calculates the rotation angle needed to make the line connecting A and B horizontal,
     and then applies that rotation to the image.
@@ -496,9 +493,11 @@ def correct_perspective_horizontal(image, A, B):
     angle_rad = np.arctan2(B[1] - A[1], B[0] - A[0])
     angle_deg = np.degrees(angle_rad)
     logger.info(f"Calculated Angle (degrees): {angle_deg:.2f}")
+
+    # 2. Select horizontal/vertical line perspective correction
     rotation_angle = angle_deg
 
-    # 2. Define the center of rotation
+    # 3. Define the center of rotation
     if len(image.shape) == 3:
         (h, w) = image.shape[:2]
     else:
@@ -506,10 +505,10 @@ def correct_perspective_horizontal(image, A, B):
     
     center = (w // 2, h // 2)
 
-    # 3. Create the rotation matrix
+    # 4. Create the rotation matrix
     M = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
 
-    # 4. Apply the rotation to the image
+    # 5. Apply the rotation to the image
     rotated_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
     return rotated_image, rotation_angle
@@ -528,10 +527,6 @@ def horizontal_iterative_correction(global_filename):
     """
     image_path = "/temp/" + global_filename 
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-
-    MAX_ITERATIONS = 10
-    CONVERGENCE_TOLERANCE = 0.5 # Degrees
-    DIVERGENCE_THRESHOLD = 0.1 # Stop if correction angle increases by more than this (e.g., 0.1 deg)
 
     # Calculate initial angle and points BEFORE loop starts
     _, A, B = calculate_maximum_length(binary_mask)
@@ -561,7 +556,7 @@ def horizontal_iterative_correction(global_filename):
         _, A, B = calculate_maximum_length(binary_mask)
 
         # B. Calculate the rotation needed and apply it
-        binary_mask, rotation_angle = correct_perspective_horizontal(binary_mask, A, B)
+        binary_mask, rotation_angle = correct_horizontal_perspective(binary_mask, A, B)
         
         # --- DIVERGENCE CHECK (After 1st iteration) ---
         if iteration > 0:
@@ -589,6 +584,15 @@ def horizontal_iterative_correction(global_filename):
         rotation_angle = best_stable_angle
 
     return binary_mask
+
+
+def determine_line_perspective_correction(shape):
+    if shape in ["Oval", "Round", "Pear", "Other", "Marquise", "Fancy"]:
+        reference = "Horizontal"
+    elif shape in ["Heart", "Triangular / Trilliant", "Triangular Cushion"]:
+        reference = "Vertical"
+
+    return reference
 
 
 # Helper function to apply iterative vertical perspective correction
@@ -630,14 +634,12 @@ def vertical_iterative_correction(original_mask):
     center = (w // 2, h // 2)
 
     # 2. ITERATIVE CORRECTION PARAMETERS
-    tolerance = 0.5 # Degrees
-    max_iterations = 20
-    rotation_angle = tolerance + 1.0 # Initialize above tolerance to start the loop
+    rotation_angle = CONVERGENCE_TOLERANCE + 1.0 # Initialize above tolerance to start the loop
     iteration = 0
     
-    logger.info(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{tolerance} deg)...")
+    logger.info(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{CONVERGENCE_TOLERANCE} deg)...")
     
-    while abs(rotation_angle) > tolerance and iteration < max_iterations:
+    while abs(rotation_angle) > CONVERGENCE_TOLERANCE and iteration < MAX_ITERATIONS:
         # A. Find the new extreme points (A and B) on the current mask
         _, _, A, B = calculate_maximum_height(current_mask)
         
@@ -721,7 +723,6 @@ def calculate_maximum_height(image):
         float: The maximum height of the side-view image.
     """
     maximum_height = 0.0
-    conversion_factor = 0.00274 * 2
     contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # 1. Find the largest contour
@@ -735,7 +736,7 @@ def calculate_maximum_height(image):
     extreme_bottom_y = np.max(all_points[:, 1]) 
     
     maximum_height = extreme_bottom_y - extreme_top_y
-    height = maximum_height * conversion_factor
+    height = maximum_height * CONVERSION_FACTOR
     height = round(height, 2)
     logger.info(f"Thickness: {height} mm")
 
@@ -765,12 +766,12 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     top_global_filename = extract_top_view_image(input_folder)
     
     # 4. Apply minimum bounding box perspective correction for rectangular shapes
-    if shape in ["Radiant", "Emerald", "Cushion", "Rectangular Cushion", "Rectangular", "Square Cushion", "Square"]:
+    if shape in ["Radiant", "Emerald", "Cushion", "Rectangular Cushion", "Rectangular", "Square Cushion", "Square", "Hexagonal"]:
         image, _, _, angle = extract_min_bounding_box(top_global_filename)
         corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
     # 5. Apply iterative horizontal perspective correcion for round shape
-    elif shape in ["Oval", "Round", "Pear", "Other", "Marquise"]:
+    elif shape in ["Oval", "Round", "Pear", "Other", "Marquise", "Fancy"]:
         corrected_image = horizontal_iterative_correction(top_global_filename)
 
     # 6. Apply iterative vertical perspective correction for heart or triangular shapes
