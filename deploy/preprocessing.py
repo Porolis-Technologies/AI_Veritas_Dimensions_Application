@@ -428,7 +428,7 @@ def correct_horizontal_perspective(image, A, B, center=None):
 
 
 # Function to apply iterative horizontal perspective correction
-def horizontal_iterative_correction(global_filename):
+def iterative_correction(global_filename, calculate_maximum_dimensions, correct_perspective):
     """" 
     Apply iterative horizontal perspective correction till convergence.
     
@@ -442,7 +442,7 @@ def horizontal_iterative_correction(global_filename):
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     # Calculate initial angle and points BEFORE loop starts
-    _, A, B = calculate_maximum_length(binary_mask)
+    _, A, B = calculate_maximum_dimensions(binary_mask)
     
     # Calculate the exact angle required for the initial rotation
     initial_correction_angle = np.degrees(np.arctan2(B[1] - A[1], B[0] - A[0]))
@@ -457,7 +457,7 @@ def horizontal_iterative_correction(global_filename):
     logger.info(f"Starting Iterative Horizontal Perspective Correction (Tolerance: {CONVERGENCE_TOLERANCE} deg)...")
     
     # Get the initial drawn mask for plotting "Before Convergence"
-    _, A, B = calculate_maximum_length(binary_mask)
+    _, A, B = calculate_maximum_dimensions(binary_mask)
     
     while abs(rotation_angle) > CONVERGENCE_TOLERANCE and iteration < MAX_ITERATIONS:
         if abs(rotation_angle) <= CONVERGENCE_TOLERANCE and iteration > 0:
@@ -466,10 +466,10 @@ def horizontal_iterative_correction(global_filename):
             break
             
         # A. Find the new extreme points (A and B) on the current mask
-        _, A, B = calculate_maximum_length(binary_mask)
+        _, A, B = calculate_maximum_dimensions(binary_mask)
 
         # B. Calculate the rotation needed and apply it
-        binary_mask, rotation_angle = correct_horizontal_perspective(binary_mask, A, B)
+        binary_mask, rotation_angle = correct_perspective(binary_mask, A, B)
         
         # --- DIVERGENCE CHECK (After 1st iteration) ---
         if iteration > 0:
@@ -532,35 +532,6 @@ def correct_vertical_perspective(image, A, B, center=None):
     rotated_image, rotation_angle = apply_warp_affine(image, rotation_angle, center)
 
     return rotated_image, rotation_angle
-
-
-# Function to apply iterative vertical perspective correction
-def vertical_iterative_correction(original_mask):
-    """
-    Applies vertical iterative perspective correction until convergence or divergence.
-    Returns: final_stable_mask, final_angle_used
-    """
-    current_mask = original_mask.copy()
-    
-    (h, w) = original_mask.shape[:2]
-    center = (w // 2, h // 2)
-
-    # 2. ITERATIVE CORRECTION PARAMETERS
-    rotation_angle = CONVERGENCE_TOLERANCE + 1.0 # Initialize above tolerance to start the loop
-    iteration = 0
-    
-    logger.info(f"Starting Iterative Vertical Perspective Correction (Tolerance: <{CONVERGENCE_TOLERANCE} deg)...")
-    
-    while abs(rotation_angle) > CONVERGENCE_TOLERANCE and iteration < MAX_ITERATIONS:
-        # A. Find the new extreme points (A and B) on the current mask
-        _, _, A, B = calculate_maximum_height(current_mask)
-        
-        # B. Calculate the rotation needed and apply it
-        current_mask, rotation_angle = correct_vertical_perspective(current_mask, A, B, center)
-        logger.info(f"Iteration {iteration + 1}: Required Rotation: {rotation_angle:.4f} deg")
-        iteration += 1
-
-    return current_mask, rotation_angle
 
 
 # Function to determine criteria for rule-based perspective for side-view image
@@ -675,13 +646,13 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
         image, _, _, angle = extract_min_bounding_box(top_global_filename)
         corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
-    # 5. Apply iterative horizontal perspective correcion for round shape
+    # 5. Apply iterative horizontal perspective correction for round shape
     elif shape in ["Oval", "Round", "Pear", "Other", "Marquise", "Fancy"]:
-        corrected_image = horizontal_iterative_correction(top_global_filename)
+        corrected_image = iterative_correction(top_global_filename, calculate_maximum_length, correct_horizontal_perspective)
 
     # 6. Apply iterative vertical perspective correction for heart or triangular shapes
     else:
-        corrected_image = vertical_iterative_correction(top_global_filename)
+        corrected_image = iterative_correction(top_global_filename, calculate_maximum_height, correct_vertical_perspective)
 
     # 7. Calculate maximum length and width from top-view image     
     length, width = calculate_max_dimensions_combined(corrected_image)
@@ -694,7 +665,7 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
 
     if extent < THRESHOLD:
         # 10. Apply iterative horizontal perspective correction to side-view image
-        corrected_image_side = horizontal_iterative_correction(side_global_filename)
+        corrected_image_side = iterative_correction(side_global_filename, calculate_maximum_length, correct_horizontal_perspective)
     else:
         # 11. Apply minimum bounding box perspective correction to side-view image
         image, width_rect, height_rect, angle_rect = extract_min_bounding_box(side_global_filename)
