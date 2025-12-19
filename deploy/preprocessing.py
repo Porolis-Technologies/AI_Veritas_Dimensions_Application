@@ -15,9 +15,24 @@ CONVERGENCE_TOLERANCE = 0.5         # Convergence threshold in Degrees
 MAX_ITERATIONS = 10                 # Maximum number of iterations for line perspective correction
 DIVERGENCE_THRESHOLD = 0.1          # Stop if correction angle increases by more than this (e.g., 0.1 deg)
 THRESHOLD = 0.78                    # Extent threshold for rule-based perspective correction of side-view image
+TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
+START_FRAME_INDEX = 40              # Start of the fixed middle range
+END_FRAME_INDEX = 49                # End of the fixed middle range
 
 # Function to extract 20 video frames
 def extract_20_frames(video_path, output_folder):
+    """
+    Extract 20 frames (first and last 5, and frame 40 to 49) from the input video and output to a destination folder.
+
+    Args:
+        video_path: Path of input videos.
+        output_folder: Path of output folder.
+
+    Returns:
+        None
+    """
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         logger.error(f"Could not open video: {video_path}")
