@@ -218,7 +218,7 @@ def calculate_maximum_length(image):
     end_point_hypotenuse = tuple(right_points[0])
 
     return maximum_length, start_point_hypotenuse, end_point_hypotenuse
-
+    
 
 # Function to extract index of top-view image filename
 def extract_top_view_image(input_folder):
@@ -231,45 +231,34 @@ def extract_top_view_image(input_folder):
     Returns:
         string: A string containing the path of the top-view image filename.
     """
-    image_extensions = ('*.png', '*.jpg', '*.jpeg')
-    image_paths = []
-    for ext in image_extensions:
-        image_paths.extend(glob.glob(os.path.join(input_folder, ext)))
-    
-    image_paths.sort()
-    image_paths = [i for i in image_paths if i.split(".")[-1] != "jpg"]
-    
-    all_lengths = []
-    processed_count = 0
-    
-    for input_path in image_paths:
-        binary_mask = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-        if binary_mask is not None:
-            length, _, _ = calculate_maximum_length(binary_mask)
-            all_lengths.append(length)
-            processed_count += 1
+    # 1. Gather relevant image paths (excluding .jpg per your logic)
+    all_image_paths = sorted([
+        p for p in glob.glob(os.path.join(input_folder, "*"))
+        if p.lower().endswith(('.png', '.jpeg'))
+    ])
 
-    total_files = len(image_paths)
-    first_sample_paths = image_paths[:SAMPLE_SIZE]
-    last_sample_paths = image_paths[max(0, total_files - SAMPLE_SIZE):]
-    paths_to_analyze = first_sample_paths + last_sample_paths
-    
+    # 2. Slice the first and last samples to analyze
+    paths_to_analyze = list(set(
+        all_image_paths[:SAMPLE_SIZE] + all_image_paths[-SAMPLE_SIZE:]
+    ))
+
     longest_length = -1.0
     longest_mask_path = None 
-    
+
+    # 3. Single pass to find the max length
     for path in paths_to_analyze:
-        mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        mask = cv2.imread(path, cv2.IMREAD_GRAYSCALE)            
         length, _, _ = calculate_maximum_length(mask) 
+        
         if length > longest_length:
             longest_length = length
             longest_mask_path = path
 
-    if longest_mask_path and longest_length > 0:
+    if longest_mask_path:
         global_filename = os.path.basename(longest_mask_path)
-        logger.info(f"global_filename: {global_filename}")
-        
+        logger.info(f"Top-view filename: {global_filename}")
         return global_filename
-    
+
 
 # Function to extract index of side-view image filename
 def extract_side_image(global_filename):
@@ -312,13 +301,6 @@ def calculate_max_dimensions_combined(image):
         gray = image
 
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    maximum_width = 0.0
-    maximum_length = 0.0
-
-    if not contours:
-        logger.info("No black object contours found in the mask.")
-        return maximum_width, maximum_length
-
     largest_contour = max(contours, key=cv2.contourArea)
     all_points = largest_contour.reshape(-1, 2)
     
@@ -576,7 +558,6 @@ def calculate_extent(global_filename):
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Select the largest contour (assumes the shape is the main object)
-    # This converts the list of contours into a single contour array 'c'
     c = max(contours, key=cv2.contourArea)
 
     # Get Min Area Rect (Rotated Bounding Box)
