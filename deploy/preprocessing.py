@@ -23,22 +23,15 @@ def extract_20_frames(video_path, output_folder):
     TARGET_FRAMES_PER_END = 5           # N for first N and last N frames
     START_FRAME_INDEX = 40              # Start of the fixed middle range
     END_FRAME_INDEX = 49                # End of the fixed middle range
-    WHITE_BACKGROUND_THRESHOLD = 240    # Average BGR pixel value threshold for the corner regions
-    CORNER_SAMPLE_SIZE = 50             # The side length in pixels of the square region to sample in each corner
-    BORDER_COLOR = (255, 255, 255) 
-    PADDING_THICKNESS = 20 
 
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        raise RuntimeError(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
+        logger.error(f"Could not open video file at path: {video_path}. Check file existence and OpenCV/FFmpeg codecs.")
 
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
     logger.info(f"Processing video: {os.path.basename(video_path)} | Total Frames: {total_frames}")
 
     # --- 1. Calculate Target Frame Indices ---
@@ -51,10 +44,10 @@ def extract_20_frames(video_path, output_folder):
         fixed_frames = list(range(START_FRAME_INDEX, END_FRAME_INDEX + 1))
     elif total_frames > START_FRAME_INDEX:
         fixed_frames = list(range(START_FRAME_INDEX, total_frames))
-        logger.info(f"  Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
+        logger.info(f"Warning: Video ends before {END_FRAME_INDEX}. Fixed set truncated at frame {total_frames - 1}.")
     else:
         fixed_frames = []
-        logger.info(f"  Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
+        logger.info(f"Warning: Video is too short for the fixed range starting at {START_FRAME_INDEX}. Fixed set skipped.")
         
     last_frames = []
     if total_frames > 0:
@@ -66,16 +59,9 @@ def extract_20_frames(video_path, output_folder):
     )))
     
     frame_indices = [idx for idx in combined_indices if idx < total_frames]
-
     logger.info(f"Total frames to attempt extraction: {len(frame_indices)}")
-
-    # --- 2. Define Corner Sample Boxes (BL and BR) ---
-    corner_boxes = [
-        (0, frame_height - CORNER_SAMPLE_SIZE, CORNER_SAMPLE_SIZE, frame_height),
-        (frame_width - CORNER_SAMPLE_SIZE, frame_height - CORNER_SAMPLE_SIZE, frame_width, frame_height)
-    ]
     
-    # --- 3. Extract and Process Frames ---
+    # --- 2. Extract and Process Frames ---
     frames_saved_count = 0
     
     for frame_index in frame_indices:
@@ -86,25 +72,9 @@ def extract_20_frames(video_path, output_folder):
             logger.info(f"Error: Failed to read frame {frame_index}. Skipping.")
             continue
 
-        corner_intensities = []
-        for x_start, y_start, x_end, y_end in corner_boxes:
-            corner_region = frame[y_start:y_end, x_start:x_end]
-            corner_intensities.append(np.mean(corner_region))
-
-        overall_corner_average = np.mean(corner_intensities) if corner_intensities else 0 
-
-        if overall_corner_average >= WHITE_BACKGROUND_THRESHOLD:
-            cv2.rectangle(
-                img=frame,
-                pt1=(0, 0),
-                pt2=(frame_width - 1, frame_height - 1),
-                color=BORDER_COLOR,
-                thickness=PADDING_THICKNESS
-            )
-
-            frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
-            cv2.imwrite(frame_filename, frame)
-            frames_saved_count += 1
+        frame_filename = os.path.join(output_folder, f"frame_{frame_index:04d}.jpg")
+        cv2.imwrite(frame_filename, frame)
+        frames_saved_count += 1
 
     cap.release()
     logger.info(f" Completed: {frames_saved_count} frames saved.")
@@ -180,7 +150,7 @@ def apply_convex_hull(image):
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
-        logger.info("   -> No contours found. Returning empty black mask.")
+        logger.info("-> No contours found. Returning empty black mask.")
         return final_mask
 
     # 4. Filter Contours
@@ -206,7 +176,7 @@ def apply_convex_hull(image):
             if cw < w or ch < h: 
                 valid_contours.append(largest_raw)
             else:
-                logger.info("   -> Only found image frame/border. Returning empty mask.")
+                logger.info("-> Only found image frame/border. Returning empty mask.")
                 return final_mask
         else:
             return final_mask
@@ -239,42 +209,34 @@ def extract_binary_masks(input_folder, output_folder):
     """
 
     image_extensions = ('.jpg')
+    image_files = os.listdir(input_folder)
+    image_files = [i for i in image_files if i.lower().endswith('.jpg')]
+    image_files.sort()
 
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-        logger.info(f"Created output directory: {output_folder}")
-
-    if not os.path.exists(input_folder):
-        logger.info(f"Error: Input directory '{input_folder}' not found.")
+    if not image_files:
+        logger.info(f"No images found in the directory: {input_folder}")
     else:
-        image_files = os.listdir(input_folder)
-        image_files = [i for i in image_files if i.lower().endswith('.jpg')]
-        image_files.sort()
+        for filename in image_files:
+            if filename.lower().endswith(image_extensions):
+                input_path = os.path.join(input_folder, filename)
+                image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
+                
+                if image is None:
+                    logger.info(f"Warning: Could not read image {filename}. Skipping.")
+                    continue
+                
+                # 1. Apply morphological gradient detection
+                processed_mask = morphological_gradient_detection(image)
 
-        if not image_files:
-            logger.info(f"No images found in the directory: {input_folder}")
-        else:
-            for filename in image_files:
-                if filename.lower().endswith(image_extensions):
-                    input_path = os.path.join(input_folder, filename)
-                    image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-                    
-                    if image is None:
-                        logger.info(f"Warning: Could not read image {filename}. Skipping.")
-                        continue
-                    
-                    # 1. Apply morphological gradient detection
-                    processed_mask = morphological_gradient_detection(image)
+                # 2. Apply convex hull
+                closed_mask = apply_convex_hull(processed_mask)
 
-                    # 2. Apply convex hull
-                    closed_mask = apply_convex_hull(processed_mask)
+                mask_filename = os.path.splitext(filename)[0] + ".png"
+                output_path = os.path.join(output_folder, mask_filename)
+                cv2.imwrite(output_path, closed_mask)
+                logger.info(f"Processed '{filename}' and saved mask to '{mask_filename}'")
 
-                    mask_filename = os.path.splitext(filename)[0] + ".png"
-                    output_path = os.path.join(output_folder, mask_filename)
-                    cv2.imwrite(output_path, closed_mask)
-                    logger.info(f"Processed '{filename}' and saved mask to '{mask_filename}'")
-
-            logger.info("\nAll images processed successfully.")
+        logger.info("\nAll images processed successfully.")
 
 
 # Function to calculate maximum length of binary mask to extract top-view image
@@ -414,18 +376,7 @@ def calculate_max_dimensions_combined(image):
     Returns:
         tuple: A tuple containing the length and width the top-view image.
     """
-
-    # Check the number of dimensions/channels
-    if len(image.shape) == 3:
-        # If it has 3 dimensions (channels), assume it's color (BGR) and convert to grayscale.
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    elif len(image.shape) == 2:
-        # If it has 2 dimensions, it is already grayscale (1 channel).
-        gray = image.copy() 
-    else:
-        # Handle unexpected number of dimensions (e.g., 4 channels for BGRA)
-        raise ValueError(f"Unexpected number of image dimensions: {len(image.shape)}")
-
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     maximum_width = 0.0
     maximum_length = 0.0
@@ -448,9 +399,6 @@ def calculate_max_dimensions_combined(image):
     extreme_right_x = np.max(all_points[:, 0])
     maximum_length = extreme_right_x - extreme_left_x
 
-    length = 0
-    width = 0
-
     if maximum_length > maximum_width:
         length = maximum_length * conversion_factor
         width = maximum_width * conversion_factor
@@ -460,7 +408,6 @@ def calculate_max_dimensions_combined(image):
 
     length = round(length, 2)
     width = round(width, 2)
-
     logger.info(f"Length: {length} mm")
     logger.info(f"Width: {width} mm")
 
