@@ -270,13 +270,12 @@ def extract_top_view_image(input_folder):
             longest_mask_path = path
 
     if longest_mask_path:
-        global_filename = os.path.basename(longest_mask_path)
-        logger.info(f"Top-view filename: {global_filename}")
-        return global_filename
+        logger.info(f"longest_mask_path: {longest_mask_path}")
+        return longest_mask_path
 
 
 # Function to extract index of side-view image filename
-def extract_side_image(global_filename):
+def extract_side_image(longest_mask_path):
     """
     Finds the side-view image filename based on the top-view image filename.
 
@@ -287,16 +286,16 @@ def extract_side_image(global_filename):
         string: A string containing the path of the side-view image filename.
     """
     # Extract top-view image frame index
-    top_view_image = global_filename
+    top_view_image = os.path.basename(longest_mask_path)
     top_view_image_index = top_view_image.split("_")[1]
     top_view_image_index = int(top_view_image_index.split(".")[0])
 
     # Extract front view image frame index
     side_view_image_index = top_view_image_index + 45
-    side_view_image = "frame_00" + str(side_view_image_index) + ".png"
-    logger.info(f"side view image filename: {side_view_image}") 
+    side_view_image_path = "/temp/frame_00" + str(side_view_image_index) + ".png"
+    logger.info(f"side view image path: {side_view_image_path}") 
 
-    return side_view_image
+    return side_view_image_path
 
 
 # Function to calculate maximum length and width from top-view image
@@ -345,7 +344,7 @@ def calculate_max_dimensions_combined(image):
 
 
 # Helper function to apply perspective correction for rectangular shapes
-def extract_min_bounding_box(global_filename):
+def extract_min_bounding_box(longest_mask_path):
     """
     Finds the minimum area bounding box for the main object in an image.
 
@@ -356,8 +355,7 @@ def extract_min_bounding_box(global_filename):
         tuple: A tuple containing the image, width, height and angle of rotation or 
                (None, None, None, None) if no image was found.
     """
-    image_path = "/temp/" + global_filename 
-    image = cv2.imread(image_path)
+    image = cv2.imread(longest_mask_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -368,7 +366,7 @@ def extract_min_bounding_box(global_filename):
         box_points = np.intp(box_points)
         
         (_, _), (width, height), angle = min_area_rect
-        logger.info(f"Processing {os.path.basename(image_path)}:")
+        logger.info(f"Processing {os.path.basename(longest_mask_path)}:")
         logger.info(f"Minimum Bounding Box: Size: ({width:.2f} x {height:.2f}), Angle: {angle:.2f}°")
 
         return image, width, height, angle
@@ -428,7 +426,7 @@ def correct_horizontal_perspective(image, A, B, center=None):
 
 
 # Function to apply iterative horizontal perspective correction
-def iterative_correction(global_filename, calculate_maximum_dimensions, correct_perspective):
+def iterative_correction(image_path, calculate_maximum_dimensions, correct_perspective):
     """" 
     Apply iterative horizontal perspective correction till convergence.
     
@@ -438,7 +436,6 @@ def iterative_correction(global_filename, calculate_maximum_dimensions, correct_
     Returns:
         image (np.array): The rotated (corrected) image.
     """
-    image_path = "/temp/" + global_filename 
     binary_mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     # Calculate initial angle and points BEFORE loop starts
@@ -535,9 +532,8 @@ def correct_vertical_perspective(image, A, B, center=None):
 
 
 # Function to determine criteria for rule-based perspective for side-view image
-def calculate_extent(global_filename):
-    image_path = "/temp/" + global_filename 
-    image = cv2.imread(image_path)
+def calculate_extent(side_view_image_path):
+    image = cv2.imread(side_view_image_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
 
     # Find contours in the grayscale image
@@ -631,7 +627,6 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     Returns:
         tuple: The tuple containing the length, width and thickness of the input video.
     """
-    
     # 1. Extract 20 video frames
     extract_20_frames(video_path, output_folder)
 
@@ -639,41 +634,41 @@ def process_dimensions(video_path, input_folder, output_folder, shape):
     extract_binary_masks(input_folder, output_folder)
 
     # 3. Extract index of top-view image filename
-    top_global_filename = extract_top_view_image(input_folder)
+    top_view_image_path = extract_top_view_image(input_folder)
     
     # 4. Apply minimum bounding box perspective correction for rectangular shapes
     if shape in ["Radiant", "Emerald", "Cushion", "Rectangular Cushion", "Rectangular", "Square Cushion", "Square", "Hexagonal"]:
-        image, _, _, angle = extract_min_bounding_box(top_global_filename)
-        corrected_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
+        image, _, _, angle = extract_min_bounding_box(top_view_image_path)
+        corrected_front_image, _ = correct_perspective_min_bounding_box_top_view(image, angle, center=None)
 
     # 5. Apply iterative horizontal perspective correction for round shape
     elif shape in ["Oval", "Round", "Pear", "Other", "Marquise", "Fancy"]:
-        corrected_image = iterative_correction(top_global_filename, calculate_maximum_length, correct_horizontal_perspective)
+        corrected_front_image = iterative_correction(top_view_image_path, calculate_maximum_length, correct_horizontal_perspective)
 
     # 6. Apply iterative vertical perspective correction for heart or triangular shapes
     else:
-        corrected_image = iterative_correction(top_global_filename, calculate_maximum_height, correct_vertical_perspective)
+        corrected_front_image = iterative_correction(top_view_image_path, calculate_maximum_height, correct_vertical_perspective)
 
     # 7. Calculate maximum length and width from top-view image     
-    length, width = calculate_max_dimensions_combined(corrected_image)
+    length, width = calculate_max_dimensions_combined(corrected_front_image)
 
     # 8. Extract index of side-view image filename
-    side_global_filename = extract_side_image(top_global_filename)
+    side_view_image_path = extract_side_image(top_view_image_path)
 
     # 9. Calculate extent of side-view image for rule-based perspective correction
-    extent = calculate_extent(side_global_filename)
+    extent = calculate_extent(side_view_image_path)
 
     if extent < THRESHOLD:
         # 10. Apply iterative horizontal perspective correction to side-view image
-        corrected_image_side = iterative_correction(side_global_filename, calculate_maximum_length, correct_horizontal_perspective)
+        corrected_side_image = iterative_correction(side_view_image_path, calculate_maximum_length, correct_horizontal_perspective)
     else:
         # 11. Apply minimum bounding box perspective correction to side-view image
-        image, width_rect, height_rect, angle_rect = extract_min_bounding_box(side_global_filename)
+        image, width_rect, height_rect, angle_rect = extract_min_bounding_box(side_view_image_path)
 
         # 12. Apply perspective correction to side-view image
-        corrected_image_side = correct_perspective_min_bounding_box_side_view(image, width_rect, height_rect, angle_rect)
+        corrected_side_image = correct_perspective_min_bounding_box_side_view(image, width_rect, height_rect, angle_rect)
 
     # 13. Calculate maximum height from side-view image
-    thickness = calculate_maximum_height(corrected_image_side)
+    thickness = calculate_maximum_height(corrected_side_image)
 
     return length, width, thickness
