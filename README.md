@@ -2,6 +2,11 @@
 
 Gemstone Dimensions Calculation App
 
+## Architecture
+<p align="center">
+  <img src="image/Dimensions-Architecture.jpg" alt="Alt Text" width="500">
+</p>
+
 ## Development
 
 ### Venv
